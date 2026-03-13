@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, Children, cloneElement } from "react";
 import { motion, AnimatePresence, useMotionValue, useSpring, useTransform, useMotionValueEvent, animate as motionAnimate } from "framer-motion";
-import { C } from "../utils/tokens.jsxx";
-import { loadGsap, onGsapReady } from "../utils/gsap.jsxx";
+import { C } from "../utils/tokens.jsx";
+import { loadGsap, onGsapReady } from "../utils/gsap.jsx";
 
 // ─── ① BLUR TEXT ─────────────────────────────────────────────────────────────
 const buildKeyframes = (from, steps) => {
