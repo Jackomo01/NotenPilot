@@ -1,9 +1,9 @@
 import { useState, useRef, useMemo, memo, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { C, R, E, WDAYS, MONTHS } from "../utils/tokens.js";
-import { fDE, toStr } from "../utils/helpers.js";
-import { useClickOutside } from "../hooks/index.js";
-import { ClickSpark } from "../animations/index.js";
+import { C, R, E, WDAYS, MONTHS } from "../utils/tokens.jsx";
+import { fDE, toStr } from "../utils/helpers.jsx";
+import { useClickOutside } from "../hooks/index.jsx";
+import { ClickSpark } from "../animations/index.jsx";
 
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
 export const Sk = ({ h=20, r=R.m, w="100%" }) => (

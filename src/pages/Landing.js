@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, memo } from "react";
 import { motion } from "framer-motion";
-import { C, R } from "../utils/tokens.js";
-import { SparkBtn } from "../components/ui.js";
-import { VariableProximity, BlurText, ScrollReveal, ScrollFloat, ScrollStack, ScrollStackItem, ClickSpark } from "../animations/index.js";
+import { C, R } from "../utils/tokens.jsx";
+import { SparkBtn } from "../components/ui.jsx";
+import { VariableProximity, BlurText, ScrollReveal, ScrollFloat, ScrollStack, ScrollStackItem, ClickSpark } from "../animations/index.jsx";
 
 const FEATURES = [
   { n:"01", title:"Übersicht behalten",       body:"Alle deine Fächer und Noten an einem Ort. Dein aktueller Notendurchschnitt wird automatisch und gewichtet berechnet.", accent:C.g1 },

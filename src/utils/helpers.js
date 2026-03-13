@@ -11,7 +11,7 @@ export const fDE   = d => {
   catch { return d; }
 };
 
-import { C } from "./tokens.js";
+import { C } from "./tokens.jsx";
 
 export const gc = g => {
   if (!g) return C.t2;

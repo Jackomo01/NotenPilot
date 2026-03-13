@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { db } from "../utils/storage.js";
+import { db } from "../utils/storage.jsx";
 
 export const useLS = (key, init) => {
   const [v, sv] = useState(() => db.get(key, init));

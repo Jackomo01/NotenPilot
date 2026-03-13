@@ -1,21 +1,21 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 
-import { AppCtx, ToastProvider } from "./context/index.js";
-import { useLS } from "./hooks/index.js";
-import { loadGsap } from "./utils/gsap.js";
-import { C, R } from "./utils/tokens.js";
-import { SEED_GRADES, SEED_SUBJECTS, Icons } from "./utils/data.js";
+import { AppCtx, ToastProvider } from "./context/index.jsx";
+import { useLS } from "./hooks/index.jsx";
+import { loadGsap } from "./utils/gsap.jsx";
+import { C, R } from "./utils/tokens.jsx";
+import { SEED_GRADES, SEED_SUBJECTS, Icons } from "./utils/data.jsx";
 
-import { Dock }      from "./animations/index.js";
-import { SparkBtn, Modal } from "./components/ui.js";
-import SearchBar     from "./components/SearchBar.js";
-import GradeForm     from "./components/GradeForm.js";
+import { Dock }      from "./animations/index.jsx";
+import { SparkBtn, Modal } from "./components/ui.jsx";
+import SearchBar     from "./components/SearchBar.jsx";
+import GradeForm     from "./components/GradeForm.jsx";
 
-import Landing   from "./pages/Landing.js";
-import AuthPage  from "./pages/AuthPage.js";
-import Dashboard from "./pages/Dashboard.js";
-import { GradesPage, StatsPage, SettingsPage } from "./pages/index.js";
+import Landing   from "./pages/Landing.jsx";
+import AuthPage  from "./pages/AuthPage.jsx";
+import Dashboard from "./pages/Dashboard.jsx";
+import { GradesPage, StatsPage, SettingsPage } from "./pages/index.jsx";
 
 const GlobalStyles = () => (
   <style>{`

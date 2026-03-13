@@ -1,13 +1,13 @@
 import { useState, useRef, memo } from "react";
 import { AnimatePresence } from "framer-motion";
-import { useApp } from "../context/index.js";
-import { useToast } from "../context/index.js";
-import { useClickOutside } from "../hooks/index.js";
-import { uid, toStr, fDE, gc, gl } from "../utils/helpers.js";
-import { ARTEN } from "../utils/tokens.js";
-import { C, R } from "../utils/tokens.js";
-import { SparkBtn, Lbl, HR, SelInp, TxtInp, Combobox, Calendar, baseInpStyle } from "./ui.js";
-import { ElasticSlider } from "../animations/index.js";
+import { useApp } from "../context/index.jsxx";
+import { useToast } from "../context/index.jsxx";
+import { useClickOutside } from "../hooks/index.jsxx";
+import { uid, toStr, fDE, gc, gl } from "../utils/helpers.jsxx";
+import { ARTEN } from "../utils/tokens.jsxx";
+import { C, R } from "../utils/tokens.jsxx";
+import { SparkBtn, Lbl, HR, SelInp, TxtInp, Combobox, Calendar, baseInpStyle } from "./ui.jsxx";
+import { ElasticSlider } from "../animations/index.jsxx";
 
 const GradeForm = memo(({ onClose, editItem }) => {
   const { grades, setGrades, subjects, setSubjects } = useApp();

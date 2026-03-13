@@ -1,9 +1,9 @@
 import { useState, useRef, memo } from "react";
 import { motion } from "framer-motion";
-import { C, R } from "../utils/tokens.js";
-import { SparkBtn, Card, Lbl, HR, TxtInp, baseInpStyle } from "../components/ui.js";
-import { VariableProximity, ClickSpark } from "../animations/index.js";
-import { useToast } from "../context/index.js";
+import { C, R } from "../utils/tokens.jsx";
+import { SparkBtn, Card, Lbl, HR, TxtInp, baseInpStyle } from "../components/ui.jsx";
+import { VariableProximity, ClickSpark } from "../animations/index.jsx";
+import { useToast } from "../context/index.jsx";
 
 const AuthPage = memo(({ onAuth }) => {
   const [mode,setMode]       = useState("login");

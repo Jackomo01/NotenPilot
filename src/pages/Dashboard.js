@@ -1,11 +1,11 @@
 import { memo, useMemo } from "react";
 import { motion } from "framer-motion";
 import { AreaChart, Area, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { useApp } from "../context/index.js";
-import { useCountUp } from "../hooks/index.js";
-import { wAvg, fDE, gc, gl } from "../utils/helpers.js";
-import { C, R } from "../utils/tokens.js";
-import { Sk, Card, Lbl, ChartTip } from "../components/ui.js";
+import { useApp } from "../context/index.jsx";
+import { useCountUp } from "../hooks/index.jsx";
+import { wAvg, fDE, gc, gl } from "../utils/helpers.jsx";
+import { C, R } from "../utils/tokens.jsx";
+import { Sk, Card, Lbl, ChartTip } from "../components/ui.jsx";
 
 const AnimNum = ({ to, dec=0 }) => { const v = useCountUp(to??0); return <span>{v.toFixed(dec)}</span>; };
 

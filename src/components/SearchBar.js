@@ -1,9 +1,9 @@
 import { useState, useRef, useMemo, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useApp } from "../context/index.js";
-import { useClickOutside } from "../hooks/index.js";
-import { fDE, gc } from "../utils/helpers.js";
-import { C, R } from "../utils/tokens.js";
+import { useApp } from "../context/index.jsx";
+import { useClickOutside } from "../hooks/index.jsx";
+import { fDE, gc } from "../utils/helpers.jsx";
+import { C, R } from "../utils/tokens.jsx";
 
 const SearchBar = memo(() => {
   const { grades } = useApp();

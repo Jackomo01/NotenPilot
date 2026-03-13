@@ -1,13 +1,13 @@
 import { useState, useMemo, memo } from "react";
 import { motion } from "framer-motion";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { useApp } from "../context/index.js";
-import { useToast } from "../context/index.js";
-import { wAvg, fDE, gc, toStr } from "../utils/helpers.js";
-import { C, R, ARTEN } from "../utils/tokens.js";
-import { SparkBtn, Card, Lbl, HR, Bdg, SelInp, Modal } from "../components/ui.js";
-import { ChartTip } from "../components/ui.js";
-import GradeForm from "../components/GradeForm.js";
+import { useApp } from "../context/index.jsx";
+import { useToast } from "../context/index.jsx";
+import { wAvg, fDE, gc, toStr } from "../utils/helpers.jsx";
+import { C, R, ARTEN } from "../utils/tokens.jsx";
+import { SparkBtn, Card, Lbl, HR, Bdg, SelInp, Modal } from "../components/ui.jsx";
+import { ChartTip } from "../components/ui.jsx";
+import GradeForm from "../components/GradeForm.jsx";
 
 // ─── Grades Page ──────────────────────────────────────────────────────────────
 export const GradesPage = memo(({ onAdd }) => {
@@ -150,7 +150,7 @@ export const SettingsPage = memo(({ user, onLogout }) => {
   const exp = () => {
     const a=document.createElement("a");
     a.href=URL.createObjectURL(new Blob([JSON.stringify({grades,subjects},null,2)],{type:"application/json"}));
-    a.download=`notenpilot-${toStr()}.json`;
+    a.download=`notenpilot-${toStr()}.jsxon`;
     a.click();
     toast("Exportiert.");
   };

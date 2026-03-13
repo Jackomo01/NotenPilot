@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback } from "react";
-import { uid } from "../utils/helpers.js";
+import { uid } from "../utils/helpers.jsx";
 
 // App context
 export const AppCtx = createContext(null);
