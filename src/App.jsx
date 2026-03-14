@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { motion } from "framer-motion";
 
 import { AppCtx, ToastProvider } from "./context/index.jsx";
@@ -47,17 +47,29 @@ const GlobalStyles = () => (
     .sf-inner   { will-change: transform, opacity; }
     .sr-word    { will-change: opacity, filter; }
     .scroll-stack-card { will-change: transform, filter; backface-visibility: hidden; }
+    @keyframes gradeHighlight {
+      0%   { background: rgba(91,110,240,0.20); }
+      70%  { background: rgba(91,110,240,0.08); }
+      100% { background: transparent; }
+    }
+    .grade-row-highlighted td {
+      animation: gradeHighlight 2.2s ease forwards;
+    }
+    .grade-row-highlighted {
+      border-left: 3px solid #5b6ef0 !important;
+    }
   `}</style>
 );
 
 function AppShell() {
-  const [grades,   setGrades]   = useLS("np6_grades",   SEED_GRADES);
-  const [subjects, setSubjects] = useLS("np6_subjects", SEED_SUBJECTS);
-  const [user,     setUser]     = useLS("np6_user",     null);
-  const [page,     setPage]     = useState("dashboard");
-  const [view,     setView]     = useState("landing");
-  const [addOpen,  setAddOpen]  = useState(false);
-  const [loading,  setLoading]  = useState(true);
+  const [grades,      setGrades]      = useLS("np6_grades",   SEED_GRADES);
+  const [subjects,    setSubjects]    = useLS("np6_subjects", SEED_SUBJECTS);
+  const [user,        setUser]        = useLS("np6_user",     null);
+  const [page,        setPage]        = useState("dashboard");
+  const [view,        setView]        = useState("landing");
+  const [addOpen,     setAddOpen]     = useState(false);
+  const [loading,     setLoading]     = useState(true);
+  const [highlightId, setHighlightId] = useState(null);
 
   useEffect(() => {
     if (user) setView("app");
@@ -68,21 +80,34 @@ function AppShell() {
 
   const ctx = useMemo(() => ({ grades, setGrades, subjects, setSubjects }), [grades, setGrades, subjects, setSubjects]);
 
-  const handleAuth   = u => { setUser(u); setView("app"); };
+  const handleAuth = u => {
+    setUser(u);
+    if (u.isNew) { setGrades([]); setSubjects([]); }
+    setView("app");
+  };
   const handleLogout = () => { setUser(null); setView("landing"); };
 
+  // Called from SearchBar when user clicks a search result
+  const handleSearchSelect = useCallback((gradeId) => {
+    setPage("grades");
+    setTimeout(() => {
+      setHighlightId(gradeId);
+      setTimeout(() => setHighlightId(null), 2500);
+    }, 80);
+  }, []);
+
   const dockItems = [
-    { id:"dashboard", label:"Dashboard",       icon:Icons.dash,     onClick:()=>setPage("dashboard") },
-    { id:"grades",    label:"Noten",           icon:Icons.notes,    onClick:()=>setPage("grades")    },
-    { id:"add",       label:"Note hinzufügen", icon:Icons.add,      onClick:()=>setAddOpen(true)     },
-    { id:"stats",     label:"Statistiken",     icon:Icons.stats,    onClick:()=>setPage("stats")     },
-    { id:"settings",  label:"Einstellungen",   icon:Icons.settings, onClick:()=>setPage("settings")  },
+    { id:"dashboard", label:"Dashboard",    icon:Icons.dash,     onClick:()=>setPage("dashboard") },
+    { id:"grades",    label:"Noten",        icon:Icons.notes,    onClick:()=>setPage("grades")    },
+    { id:"add",       label:"+ Note",       icon:Icons.add,      onClick:()=>setAddOpen(true)     },
+    { id:"stats",     label:"Statistiken",  icon:Icons.stats,    onClick:()=>setPage("stats")     },
+    { id:"settings",  label:"Einstellungen",icon:Icons.settings, onClick:()=>setPage("settings")  },
   ];
 
   const renderPage = () => {
     switch (page) {
       case "dashboard": return <Dashboard loading={loading} user={user}/>;
-      case "grades":    return <GradesPage onAdd={()=>setAddOpen(true)}/>;
+      case "grades":    return <GradesPage onAdd={()=>setAddOpen(true)} highlightId={highlightId}/>;
       case "stats":     return <StatsPage/>;
       case "settings":  return <SettingsPage user={user} onLogout={handleLogout}/>;
     }
@@ -113,13 +138,15 @@ function AppShell() {
               </div>
               <span style={{ fontSize:13, fontWeight:800, letterSpacing:"-0.04em", color:"#ededf8" }}>Notenpilot</span>
             </div>
-            <SearchBar/>
+
+            <SearchBar onSelect={handleSearchSelect}/>
+
             <div style={{ display:"flex", alignItems:"center", gap:10 }}>
               <SparkBtn onClick={() => setAddOpen(true)}>+ Note</SparkBtn>
               {user && (
-                <motion.button onClick={handleLogout} whileHover={{ scale:1.05 }}
+                <motion.button onClick={() => setPage("settings")} whileHover={{ scale:1.05 }}
                   style={{ width:30, height:30, borderRadius:"9999px", background:"#5b6ef025", border:"1px solid #5b6ef040", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:"#7585f4", fontFamily:"inherit" }}
-                  title="Abmelden"
+                  title="Einstellungen"
                 >{(user.name||"?")[0].toUpperCase()}</motion.button>
               )}
             </div>
@@ -131,7 +158,7 @@ function AppShell() {
 
           <div style={{ position:"fixed", bottom:20, left:0, right:0, display:"flex", justifyContent:"center", zIndex:200, pointerEvents:"none" }}>
             <div style={{ pointerEvents:"all" }}>
-              <Dock items={dockItems} activeId={page} panelHeight={62} baseItemSize={46} magnification={68} distance={200}/>
+              <Dock items={dockItems} activeId={page} panelHeight={62} baseItemSize={48} magnification={72} distance={200}/>
             </div>
           </div>
         </div>
