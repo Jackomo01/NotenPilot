@@ -1,6 +1,6 @@
-import { memo, useMemo } from "react";
+import React, { memo, useMemo } from "react";
 import { motion } from "framer-motion";
-import { AreaChart, Area, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { AreaChart, Area, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend } from "recharts";
 import { useApp } from "../context/index.jsx";
 import { useCountUp } from "../hooks/index.jsx";
 import { wAvg, fDE, gc, gl } from "../utils/helpers.jsx";
@@ -8,6 +8,121 @@ import { C, R } from "../utils/tokens.jsx";
 import { Sk, Card, Lbl, ChartTip } from "../components/ui.jsx";
 
 const AnimNum = ({ to, dec=0 }) => { const v = useCountUp(to??0); return <span>{v.toFixed(dec)}</span>; };
+
+
+
+
+
+
+
+
+// ─── Shared NoteChart ─────────────────────────────────────────────────────────
+const NoteChart = ({ data, avgColor, height = 210 }) => {
+  // X uses numeric idx as category key — avoids Recharts duplicate-datum hover bug.
+  // Ticks thinned to max 8 labels, but every idx is a valid hover target.
+  const tickIdxs = React.useMemo(() => {
+    const n = data.length;
+    if (!n) return [];
+    if (n <= 8) return data.map(d => d.idx);
+    const step = Math.max(1, Math.floor(n / 7));
+    const t = [];
+    for (let i = 0; i < n; i += step) t.push(data[i].idx);
+    if (t[t.length - 1] !== data[n - 1].idx) t.push(data[n - 1].idx);
+    return t;
+  }, [data]);
+
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <AreaChart data={data} margin={{top:6, right:4, bottom:0, left:-22}}>
+        <defs>
+          <linearGradient id="ncGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={avgColor} stopOpacity={0.28}/>
+            <stop offset="100%" stopColor={avgColor} stopOpacity={0}/>
+          </linearGradient>
+        </defs>
+        <CartesianGrid stroke={C.line} strokeDasharray="4 4" vertical={false}/>
+        <XAxis
+          dataKey="idx"
+          type="category"
+          allowDuplicatedCategory={false}
+          ticks={tickIdxs}
+          tickFormatter={(i) => { const d = data.find(p => p.idx === i); return d ? d.datum : ""; }}
+          tick={{fill:C.t2, fontSize:10}}
+          axisLine={false}
+          tickLine={false}
+          interval={0}
+        />
+        <YAxis
+          domain={[1, 6]}
+          reversed
+          ticks={[1, 2, 3, 4, 5, 6]}
+          tick={{fill:C.t2, fontSize:10}}
+          axisLine={false}
+          tickLine={false}
+        />
+        <Tooltip
+          cursor={{ stroke:C.lineH, strokeWidth:1 }}
+          wrapperStyle={{ outline:"none" }}
+          content={({ active, payload, label }) => {
+            if (!active || !payload?.length) return null;
+            const point = data.find(d => d.idx === label || d.idx === Number(label));
+            const fach = payload.find(p => p.name === "Note")?.payload?.Fach;
+            return (
+              <div style={{ background:C.bg3, border:`1px solid ${C.lineH}`, borderRadius:R.m, padding:"9px 13px", fontSize:12 }}>
+                <div style={{ color:C.t2, marginBottom:5 }}>{point?.datum ?? label}</div>
+                {payload.map(p => (
+                  <div key={p.name} style={{ marginTop:3 }}>
+                    <span style={{ color:C.t2, fontWeight:500 }}>{p.name}:</span>{" "}
+                    <span style={{ color:C.t0, fontWeight:700 }}>
+                      {typeof p.value === "number" ? p.value.toFixed(2) : p.value}
+                    </span>
+                    {p.name === "Note" && fach && (
+                      <span style={{ color:C.t2, fontWeight:400, marginLeft:6 }}>{fach}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          }}
+        />
+        <Area
+          type="monotone"
+          dataKey="Schnitt"
+          stroke={avgColor}
+          strokeWidth={2.5}
+          fill="url(#ncGrad)"
+          dot={false}
+          activeDot={{ r:5, fill:avgColor, stroke:"#fff", strokeWidth:2.5 }}
+          name="Durchschnitt"
+          isAnimationActive={false}
+        />
+        <Line
+          type="monotone"
+          dataKey="Note"
+          stroke={C.lineH}
+          strokeWidth={1.5}
+          dot={false}
+          activeDot={{ r:5, fill:C.lineH, stroke:"#fff", strokeWidth:2.5 }}
+          name="Note"
+          isAnimationActive={false}
+        />
+        <Legend
+          verticalAlign="top"
+          align="right"
+          iconType="circle"
+          iconSize={8}
+          wrapperStyle={{ fontSize:11, paddingBottom:8 }}
+          formatter={(value) => <span style={{ color:C.t1, fontWeight:500 }}>{value}</span>}
+        />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+};
+
+
+
+
+
 
 const Dashboard = memo(({ loading, user }) => {
   const { grades, subjects } = useApp();
@@ -27,7 +142,7 @@ const Dashboard = memo(({ loading, user }) => {
     return s.map((g,i) => {
       const parts = g.date.split("-"); // YYYY-MM-DD
       const datum = parts.length === 3 ? `${parts[2]}.${parts[1]}.` : g.date.slice(5);
-      return { datum, Note:g.grade, Schnitt:wAvg(s.slice(0,i+1)) };
+      return { datum, idx:i, Note:g.grade, Schnitt:wAvg(s.slice(0,i+1)), Fach:g.subject };
     });
   }, [grades]);
 
@@ -99,31 +214,12 @@ const Dashboard = memo(({ loading, user }) => {
       {/* Charts row */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 300px", gap:12 }}>
         <Card pad="22px">
-          <div style={{ fontSize:13, fontWeight:600, color:C.t0, marginBottom:16 }}>Notenentwicklung</div>
+          <div style={{ fontSize:13, fontWeight:600, color:C.t0, marginBottom:16 }}>Notenverlauf</div>
           {trend.length >= 2 ? (
-            <ResponsiveContainer width="100%" height={210}>
-              <AreaChart data={trend} margin={{top:4,right:4,bottom:0,left:-22}}>
-                <defs>
-                  <linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={avgColor} stopOpacity={0.3}/>
-                    <stop offset="100%" stopColor={avgColor} stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke={C.line} strokeDasharray="4 4" vertical={false}/>
-                <XAxis dataKey="datum" tick={{fill:C.t2,fontSize:10}} axisLine={false} tickLine={false}/>
-                <YAxis domain={[1,6]} reversed tick={{fill:C.t2,fontSize:10}} axisLine={false} tickLine={false}/>
-                <Tooltip
-                  content={<ChartTip/>}
-                  cursor={{ stroke:C.lineH, strokeWidth:1 }}
-                  wrapperStyle={{ outline:"none" }}
-                />
-                <Area type="monotone" dataKey="Schnitt" stroke={avgColor} strokeWidth={2.5} fill="url(#ag)" dot={false} name="Durchschnitt"/>
-                <Line type="monotone" dataKey="Note" stroke={C.lineH} strokeWidth={1} dot={{fill:avgColor,r:3.5,strokeWidth:0}} name="Note"/>
-              </AreaChart>
-            </ResponsiveContainer>
+            <NoteChart data={trend} avgColor={avgColor} height={220}/>
           ) : (
             <div style={{ height:210, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, color:C.t2 }}>
-              Mind. 2 Noten für den Verlauf
+              Nicht genug Daten
             </div>
           )}
         </Card>

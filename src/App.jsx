@@ -80,11 +80,7 @@ function AppShell() {
 
   const ctx = useMemo(() => ({ grades, setGrades, subjects, setSubjects }), [grades, setGrades, subjects, setSubjects]);
 
-  const handleAuth = u => {
-    setUser(u);
-    if (u.isNew) { setGrades([]); setSubjects([]); }
-    setView("app");
-  };
+  const handleAuth   = u => { setUser(u); setView("app"); };
   const handleLogout = () => { setUser(null); setView("landing"); };
 
   // Called from SearchBar when user clicks a search result
@@ -158,7 +154,7 @@ function AppShell() {
 
           <div style={{ position:"fixed", bottom:20, left:0, right:0, display:"flex", justifyContent:"center", zIndex:200, pointerEvents:"none" }}>
             <div style={{ pointerEvents:"all" }}>
-              <Dock items={dockItems} activeId={page} panelHeight={62} baseItemSize={48} magnification={72} distance={200}/>
+              <Dock items={dockItems} activeId={page} panelHeight={50} baseItemSize={50} magnification={70} distance={200}/>
             </div>
           </div>
         </div>

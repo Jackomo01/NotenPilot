@@ -1,6 +1,6 @@
-import { useState, useMemo, memo, useEffect, useRef } from "react";
+import React, { useState, useMemo, memo, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { useApp } from "../context/index.jsx";
 import { useToast } from "../context/index.jsx";
 import { wAvg, fDE, gc, toStr } from "../utils/helpers.jsx";
@@ -8,6 +8,121 @@ import { C, R, ARTEN } from "../utils/tokens.jsx";
 import { SparkBtn, Card, Lbl, HR, Bdg, SelInp, Modal } from "../components/ui.jsx";
 import { ChartTip } from "../components/ui.jsx";
 import GradeForm from "../components/GradeForm.jsx";
+
+
+
+
+
+
+
+
+// ─── Shared NoteChart ─────────────────────────────────────────────────────────
+const NoteChart = ({ data, avgColor, height = 210 }) => {
+  // X uses numeric idx as category key — avoids Recharts duplicate-datum hover bug.
+  // Ticks thinned to max 8 labels, but every idx is a valid hover target.
+  const tickIdxs = React.useMemo(() => {
+    const n = data.length;
+    if (!n) return [];
+    if (n <= 8) return data.map(d => d.idx);
+    const step = Math.max(1, Math.floor(n / 7));
+    const t = [];
+    for (let i = 0; i < n; i += step) t.push(data[i].idx);
+    if (t[t.length - 1] !== data[n - 1].idx) t.push(data[n - 1].idx);
+    return t;
+  }, [data]);
+
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <AreaChart data={data} margin={{top:6, right:4, bottom:0, left:-22}}>
+        <defs>
+          <linearGradient id="ncGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={avgColor} stopOpacity={0.28}/>
+            <stop offset="100%" stopColor={avgColor} stopOpacity={0}/>
+          </linearGradient>
+        </defs>
+        <CartesianGrid stroke={C.line} strokeDasharray="4 4" vertical={false}/>
+        <XAxis
+          dataKey="idx"
+          type="category"
+          allowDuplicatedCategory={false}
+          ticks={tickIdxs}
+          tickFormatter={(i) => { const d = data.find(p => p.idx === i); return d ? d.datum : ""; }}
+          tick={{fill:C.t2, fontSize:10}}
+          axisLine={false}
+          tickLine={false}
+          interval={0}
+        />
+        <YAxis
+          domain={[1, 6]}
+          reversed
+          ticks={[1, 2, 3, 4, 5, 6]}
+          tick={{fill:C.t2, fontSize:10}}
+          axisLine={false}
+          tickLine={false}
+        />
+        <Tooltip
+          cursor={{ stroke:C.lineH, strokeWidth:1 }}
+          wrapperStyle={{ outline:"none" }}
+          content={({ active, payload, label }) => {
+            if (!active || !payload?.length) return null;
+            const point = data.find(d => d.idx === label || d.idx === Number(label));
+            const fach = payload.find(p => p.name === "Note")?.payload?.Fach;
+            return (
+              <div style={{ background:C.bg3, border:`1px solid ${C.lineH}`, borderRadius:R.m, padding:"9px 13px", fontSize:12 }}>
+                <div style={{ color:C.t2, marginBottom:5 }}>{point?.datum ?? label}</div>
+                {payload.map(p => (
+                  <div key={p.name} style={{ marginTop:3 }}>
+                    <span style={{ color:C.t2, fontWeight:500 }}>{p.name}:</span>{" "}
+                    <span style={{ color:C.t0, fontWeight:700 }}>
+                      {typeof p.value === "number" ? p.value.toFixed(2) : p.value}
+                    </span>
+                    {p.name === "Note" && fach && (
+                      <span style={{ color:C.t2, fontWeight:400, marginLeft:6 }}>{fach}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          }}
+        />
+        <Area
+          type="monotone"
+          dataKey="Schnitt"
+          stroke={avgColor}
+          strokeWidth={2.5}
+          fill="url(#ncGrad)"
+          dot={false}
+          activeDot={{ r:5, fill:avgColor, stroke:"#fff", strokeWidth:2.5 }}
+          name="Durchschnitt"
+          isAnimationActive={false}
+        />
+        <Line
+          type="monotone"
+          dataKey="Note"
+          stroke={C.lineH}
+          strokeWidth={1.5}
+          dot={false}
+          activeDot={{ r:5, fill:C.lineH, stroke:"#fff", strokeWidth:2.5 }}
+          name="Note"
+          isAnimationActive={false}
+        />
+        <Legend
+          verticalAlign="top"
+          align="right"
+          iconType="circle"
+          iconSize={8}
+          wrapperStyle={{ fontSize:11, paddingBottom:8 }}
+          formatter={(value) => <span style={{ color:C.t1, fontWeight:500 }}>{value}</span>}
+        />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+};
+
+
+
+
+
 
 // ─── Grades Page ──────────────────────────────────────────────────────────────
 export const GradesPage = memo(({ onAdd, highlightId }) => {
@@ -138,7 +253,7 @@ export const StatsPage = memo(() => {
     return s.map((g,i) => {
       const parts = g.date.split("-");
       const datum = parts.length === 3 ? `${parts[2]}.${parts[1]}.` : g.date.slice(5);
-      return { datum, Note:g.grade, Schnitt:wAvg(s.slice(0,i+1)) };
+      return { datum, idx:i, Note:g.grade, Schnitt:wAvg(s.slice(0,i+1)), Fach:g.subject };
     });
   }, [fil]);
 
@@ -149,10 +264,58 @@ export const StatsPage = memo(() => {
     return Object.entries(map).map(([name,count]) => ({ name, count })).sort((a,b) => b.count-a.count);
   }, [fil]);
 
-  const avgV   = wAvg(fil);
-  const bestV  = fil.length ? Math.min(...fil.map(g=>g.grade)) : null;
-  const worstV = fil.length ? Math.max(...fil.map(g=>g.grade)) : null;
+  const avgV    = wAvg(fil);
   const avgColor = avgV ? gc(avgV) : C.t2;
+
+  // Notentendenz via lineare Regression (slope < 0 = besser, > 0 = schlechter)
+  const trend = useMemo(() => {
+    if (fil.length < 3) return null;
+    const sorted = [...fil].sort((a,b) => new Date(a.date)-new Date(b.date));
+    const n = sorted.length;
+    const xs = sorted.map((_,i) => i);
+    const ys = sorted.map(g => g.grade);
+    const xMean = xs.reduce((s,x) => s+x, 0) / n;
+    const yMean = ys.reduce((s,y) => s+y, 0) / n;
+    const num = xs.reduce((s,x,i) => s + (x-xMean)*(ys[i]-yMean), 0);
+    const den = xs.reduce((s,x) => s + (x-xMean)**2, 0);
+    const slope = den === 0 ? 0 : num / den;
+    if (slope < -0.08) return { label:"Verbessert", icon:"↑", color:C.g1 };
+    if (slope >  0.08) return { label:"Verschlechtert", icon:"↓", color:C.g5 };
+    return { label:"Stabil", icon:"→", color:C.g3 };
+  }, [fil]);
+
+  // Häufigste Note (gerundet auf 0.5)
+  const mostFrequent = useMemo(() => {
+    if (!fil.length) return null;
+    const map = {};
+    fil.forEach(g => {
+      const r = Math.round(g.grade * 2) / 2;
+      map[r] = (map[r] || 0) + 1;
+    });
+    const best = Object.entries(map).sort((a,b) => b[1]-a[1])[0];
+    return best ? parseFloat(best[0]) : null;
+  }, [fil]);
+
+  // Letzte Verbesserung: letztes Paar aufeinanderfolgender Noten im selben Fach wo die Note gesunken ist
+  const lastImprovement = useMemo(() => {
+    if (fil.length < 2) return null;
+    // Stable sort: by date, then by id as tiebreaker for same-day entries
+    const sorted = [...fil].sort((a, b) => {
+      const diff = new Date(a.date) - new Date(b.date);
+      if (diff !== 0) return diff;
+      return a.id < b.id ? -1 : 1; // stable tiebreaker
+    });
+    // go backwards to find the most recent improvement
+    for (let i = sorted.length - 1; i >= 1; i--) {
+      const curr = sorted[i];
+      // find the most recent previous note in the same subject
+      const prev = [...sorted].slice(0, i).reverse().find(g => g.subject === curr.subject);
+      if (prev && curr.grade < prev.grade) {
+        return { subject: curr.subject, from: prev.grade, to: curr.grade };
+      }
+    }
+    return null;
+  }, [fil]);
 
   return (
     <motion.div initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} transition={{duration:0.25}} style={{display:"grid",gap:16}}>
@@ -170,49 +333,47 @@ export const StatsPage = memo(() => {
         </div>
       </div>
 
-      {/* 4 KPI cards — Durchschnitt with grade-color gradient, no Gesamtgewicht */}
+      {/* 4 KPI cards — alle mit passendem Gradient */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
         <Card pad="20px 22px" style={{position:"relative",overflow:"hidden"}}>
           <div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at top right,${avgColor}18 0%,transparent 70%)`,pointerEvents:"none"}}/>
           <Lbl>Durchschnitt</Lbl>
           <div style={{fontSize:34,fontWeight:900,letterSpacing:"-0.05em",color:avgColor,lineHeight:1}}>{avgV?.toFixed(2)??"–"}</div>
-          {avgV && <div style={{fontSize:11,color:C.t1,marginTop:4}}>{avgV<=1.5?"Sehr gut":avgV<=2.5?"Gut":avgV<=3.5?"Befriedigend":avgV<=4.5?"Ausreichend":"Mangelhaft"}</div>}
-        </Card>
-        <Card pad="20px 22px">
-          <Lbl>Beste Note</Lbl>
-          <div style={{fontSize:34,fontWeight:800,letterSpacing:"-0.04em",color:C.g1,lineHeight:1}}>{bestV?.toFixed(1)??"–"}</div>
-        </Card>
-        <Card pad="20px 22px">
-          <Lbl>Schlechteste</Lbl>
-          <div style={{fontSize:34,fontWeight:800,letterSpacing:"-0.04em",color:worstV?gc(worstV):C.t2,lineHeight:1}}>{worstV?.toFixed(1)??"–"}</div>
+
         </Card>
         <Card pad="20px 22px">
           <Lbl>Anzahl Noten</Lbl>
           <div style={{fontSize:34,fontWeight:800,letterSpacing:"-0.04em",color:C.t0,lineHeight:1}}>{fil.length}</div>
         </Card>
-      </div>
-
-      {/* Trend chart + Leistungsarten */}
+        <Card pad="20px 22px">
+          <Lbl>Häufigste Note</Lbl>
+          {mostFrequent != null ? (
+            <div style={{fontSize:34,fontWeight:900,color:gc(mostFrequent),letterSpacing:"-0.04em",lineHeight:1}}>
+              {mostFrequent.toFixed(1).replace(".",",")}
+            </div>
+          ) : <div style={{fontSize:13,color:C.t2,marginTop:6}}>–</div>}
+        </Card>
+        <Card pad="20px 22px">
+          <Lbl>Letzte Verbesserung</Lbl>
+          {lastImprovement ? (
+            <>
+              <div style={{fontSize:13,fontWeight:700,color:C.t0,marginTop:4,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                {lastImprovement.subject}
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:18,fontWeight:800,color:gc(lastImprovement.from)}}>{lastImprovement.from.toFixed(1).replace(".",",")}</span>
+                <span style={{fontSize:13,color:C.t2}}>→</span>
+                <span style={{fontSize:18,fontWeight:800,color:gc(lastImprovement.to)}}>{lastImprovement.to.toFixed(1).replace(".",",")}</span>
+              </div>
+            </>
+          ) : <div style={{fontSize:13,color:C.t2,marginTop:6}}>Keine</div>}
+        </Card>
+      </div>      {/* Trend chart + Leistungsarten */}
       <div style={{display:"grid",gridTemplateColumns:"3fr 2fr",gap:12}}>
         <Card pad="22px">
           <div style={{fontSize:13,fontWeight:600,color:C.t0,marginBottom:14}}>Notenverlauf</div>
           {ld.length>=2 ? (
-            <ResponsiveContainer width="100%" height={210}>
-              <AreaChart data={ld} margin={{top:4,right:4,bottom:0,left:-22}}>
-                <defs>
-                  <linearGradient id="sgAvg" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={avgColor} stopOpacity={0.3}/>
-                    <stop offset="100%" stopColor={avgColor} stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke={C.line} strokeDasharray="4 4" vertical={false}/>
-                <XAxis dataKey="datum" tick={{fill:C.t2,fontSize:10}} axisLine={false} tickLine={false}/>
-                <YAxis domain={[1,6]} reversed tick={{fill:C.t2,fontSize:10}} axisLine={false} tickLine={false}/>
-                <Tooltip content={<ChartTip/>}/>
-                <Area type="monotone" dataKey="Schnitt" stroke={avgColor} strokeWidth={2.5} fill="url(#sgAvg)" dot={false} name="Durchschnitt"/>
-                <Line type="monotone" dataKey="Note" stroke={C.lineH} strokeWidth={1} dot={{fill:avgColor,r:3.5,strokeWidth:0}} name="Note"/>
-              </AreaChart>
-            </ResponsiveContainer>
+            <NoteChart data={ld} avgColor={avgColor} height={210}/>
           ) : <div style={{height:210,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:C.t2}}>Nicht genug Daten</div>}
         </Card>
 

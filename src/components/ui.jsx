@@ -103,13 +103,17 @@ export const Combobox = memo(({ value, onChange, options, placeholder, autoFocus
     return options.filter(o => o.toLowerCase().includes(ql));
   }, [q, options]);
 
-  // Only show "create new" when the trimmed input does NOT exactly match any existing option
+  // Only show "create new" when typed value doesn't exactly match any existing option
   const exactMatch = useMemo(() => {
     const ql = q.trim().toLowerCase();
     return options.some(o => o.toLowerCase() === ql);
   }, [q, options]);
 
   const showCreate = q.trim() && !exactMatch;
+
+  // FIX: Only show dropdown when there is actual content to show
+  // This prevents the empty dropdown (thin line) when no subjects exist and input is empty
+  const hasContent = filtered.length > 0 || showCreate;
 
   const sel = useCallback(opt => {
     setQ(opt); onChange(opt); setOpen(false); setHi(-1);
@@ -135,7 +139,8 @@ export const Combobox = memo(({ value, onChange, options, placeholder, autoFocus
         style={{ ...baseInpStyle(f || open) }}
       />
       <AnimatePresence>
-        {open && (
+        {/* Only render dropdown when there is actual content — prevents thin-line bug */}
+        {open && hasContent && (
           <motion.div
             initial={{ opacity:0, y:-8 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, y:-8 }}
             transition={{ duration:0.12 }}

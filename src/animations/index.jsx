@@ -445,7 +445,6 @@ function DockItem({ children, onClick, mouseX, spring, distance, magnification, 
         position: "relative",
         flexShrink: 0,
         cursor: "pointer",
-        // overflow visible so label can extend above
         overflow: "visible",
       }}
       onHoverStart={() => isHovered.set(1)}
@@ -478,14 +477,19 @@ function DockLabel({ children, isHovered }) {
           exit={{ opacity:0, y:4 }}
           transition={{ duration:0.15 }}
           style={{
-            // Key fix: position absolutely, centered over the item
-            // left: 50% + translateX(-50%) centers relative to the item's current width
-            // We use a wrapper approach: position inside the icon layer at absolute center
+            // FIX: use inset:0 + flex centering instead of left:50%/translateX(-50%)
+            // This centers the label relative to the full item width regardless of spring animation
             position: "absolute",
             bottom: "calc(100% + 8px)",
-            left: "50%",
-            transform: "translateX(-50%)",
-            // Label styling
+            left: 0,
+            right: 0,
+            display: "flex",
+            justifyContent: "center",
+            pointerEvents: "none",
+            zIndex: 400,
+          }}
+        >
+          <div style={{
             background: C.bg4,
             border: `1px solid ${C.lineH}`,
             borderRadius: "6px",
@@ -494,14 +498,10 @@ function DockLabel({ children, isHovered }) {
             fontWeight: 600,
             color: C.t0,
             whiteSpace: "nowrap",
-            pointerEvents: "none",
-            zIndex: 400,
             boxShadow: "0 4px 20px rgba(0,0,0,0.7)",
-            // Prevent clipping
-            isolation: "isolate",
-          }}
-        >
-          {children}
+          }}>
+            {children}
+          </div>
         </motion.div>
       )}
     </AnimatePresence>
@@ -555,7 +555,6 @@ export function Dock({
   const height  = useSpring(hTarget, spring);
 
   return (
-    // Outer container: overflow visible so tooltips appear above
     <motion.div style={{ height, overflow:"visible", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
       <motion.div
         onMouseMove={({ pageX }) => { isHov.set(1); mouseX.set(pageX); }}
@@ -571,7 +570,6 @@ export function Dock({
           borderRadius: "18px",
           padding: "8px 16px",
           boxShadow: `0 8px 40px rgba(0,0,0,0.8), 0 0 0 1px ${C.line}`,
-          // overflow visible so tooltip labels extend above the panel
           overflow: "visible",
         }}
         role="toolbar"
