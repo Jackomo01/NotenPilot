@@ -46,7 +46,6 @@ const GradeForm = memo(({ onClose, editItem }) => {
   const submit = () => {
     if (!validate()) return;
     const subj = form.subject.trim();
-    // Only add subject if it genuinely doesn't exist yet
     if (subj && !subjects.includes(subj)) setSubjects(p => [...p, subj]);
     const entry = { ...form, subject: subj, grade: parseFloat(form.grade), weight: form.weight };
     if (editItem) {
@@ -66,7 +65,8 @@ const GradeForm = memo(({ onClose, editItem }) => {
       {/* Fach */}
       <div style={{ marginBottom: 18 }}>
         <Lbl>Fach</Lbl>
-        <Combobox value={form.subject} onChange={set("subject")} options={subjects} placeholder="Fach eingeben oder wählen…" autoFocus />
+        {/* autoFocus entfernt — kein automatisches Fokussieren beim Öffnen */}
+        <Combobox value={form.subject} onChange={set("subject")} options={subjects} placeholder="Fach eingeben oder wählen…" />
         {errors.subject && <div style={{ fontSize: 11, color: C.err, marginTop: 4 }}>{errors.subject}</div>}
       </div>
 
@@ -150,7 +150,7 @@ const GradeForm = memo(({ onClose, editItem }) => {
         </AnimatePresence>
       </div>
 
-      {/* Datum — TT.MM.JJJJ */}
+      {/* Datum */}
       <div ref={calRef} style={{ marginBottom: 24 }}>
         <Lbl>Datum</Lbl>
         <div style={{ position:"relative" }}>

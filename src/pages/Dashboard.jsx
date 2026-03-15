@@ -24,7 +24,11 @@ const Dashboard = memo(({ loading, user }) => {
 
   const trend = useMemo(() => {
     const s = [...grades].sort((a,b) => new Date(a.date)-new Date(b.date));
-    return s.map((g,i) => ({ datum:g.date.slice(5), Note:g.grade, Schnitt:wAvg(s.slice(0,i+1)) }));
+    return s.map((g,i) => {
+      const parts = g.date.split("-"); // YYYY-MM-DD
+      const datum = parts.length === 3 ? `${parts[2]}.${parts[1]}.` : g.date.slice(5);
+      return { datum, Note:g.grade, Schnitt:wAvg(s.slice(0,i+1)) };
+    });
   }, [grades]);
 
   const recent = useMemo(() => [...grades].sort((a,b) => new Date(b.date)-new Date(a.date)).slice(0,7), [grades]);

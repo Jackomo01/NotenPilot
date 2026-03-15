@@ -185,10 +185,10 @@ export const ScrollStack = ({
   scaleEndPosition = "10%", baseScale = 0.85,
   rotationAmount = 0, blurAmount = 0,
 }) => {
-  const scrollerRef  = useRef(null);
-  const cardsRef     = useRef([]);
-  const lastTRef     = useRef(new Map());
-  const rafRef       = useRef(null);
+  const scrollerRef = useRef(null);
+  const cardsRef    = useRef([]);
+  const lastTRef    = useRef(new Map());
+  const rafRef      = useRef(null);
 
   const parseP = (val, h) => {
     if (typeof val === "string" && val.includes("%")) return (parseFloat(val) / 100) * h;
@@ -435,14 +435,26 @@ function DockItem({ children, onClick, mouseX, spring, distance, magnification, 
   });
   const targetSize = useTransform(mouseDistance, [-distance, 0, distance], [baseItemSize, magnification, baseItemSize]);
   const size = useSpring(targetSize, spring);
+
   return (
-    <motion.div ref={ref} style={{ width:size, height:size, position:"relative", flexShrink:0, cursor:"pointer" }}
+    <motion.div
+      ref={ref}
+      style={{
+        width: size,
+        height: size,
+        position: "relative",
+        flexShrink: 0,
+        cursor: "pointer",
+        // overflow visible so label can extend above
+        overflow: "visible",
+      }}
       onHoverStart={() => isHovered.set(1)}
       onHoverEnd={()   => isHovered.set(0)}
       onFocus={()      => isHovered.set(1)}
       onBlur={()       => isHovered.set(0)}
       onClick={onClick}
-      tabIndex={0} role="button"
+      tabIndex={0}
+      role="button"
     >
       {Children.map(children, child => cloneElement(child, { isHovered, isActiveItem }))}
     </motion.div>
@@ -456,18 +468,41 @@ function DockLabel({ children, isHovered }) {
     const unsub = isHovered.on("change", v => setIsVisible(v === 1));
     return () => unsub();
   }, [isHovered]);
+
   return (
     <AnimatePresence>
       {isVisible && (
-        <motion.div initial={{ opacity:0, y:4 }} animate={{ opacity:1, y:-8 }} exit={{ opacity:0, y:4 }}
-          transition={{ duration:0.18 }}
+        <motion.div
+          initial={{ opacity:0, y:4 }}
+          animate={{ opacity:1, y:0 }}
+          exit={{ opacity:0, y:4 }}
+          transition={{ duration:0.15 }}
           style={{
-            position:"absolute", bottom:"calc(100% + 6px)", left:"50%", transform:"translateX(-50%)",
-            background:C.bg4, border:`1px solid ${C.lineH}`, borderRadius:"6px",
-            padding:"3px 10px", fontSize:11, fontWeight:600, color:C.t0, whiteSpace:"nowrap",
-            zIndex:300, boxShadow:"0 4px 20px rgba(0,0,0,0.7)", pointerEvents:"none",
+            // Key fix: position absolutely, centered over the item
+            // left: 50% + translateX(-50%) centers relative to the item's current width
+            // We use a wrapper approach: position inside the icon layer at absolute center
+            position: "absolute",
+            bottom: "calc(100% + 8px)",
+            left: "50%",
+            transform: "translateX(-50%)",
+            // Label styling
+            background: C.bg4,
+            border: `1px solid ${C.lineH}`,
+            borderRadius: "6px",
+            padding: "4px 10px",
+            fontSize: 11,
+            fontWeight: 600,
+            color: C.t0,
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+            zIndex: 400,
+            boxShadow: "0 4px 20px rgba(0,0,0,0.7)",
+            // Prevent clipping
+            isolation: "isolate",
           }}
-        >{children}</motion.div>
+        >
+          {children}
+        </motion.div>
       )}
     </AnimatePresence>
   );
@@ -476,45 +511,81 @@ function DockLabel({ children, isHovered }) {
 function DockIcon({ children, isHovered, isActiveItem }) {
   return (
     <div style={{
-      width:"100%", height:"100%", borderRadius:"14px",
+      width: "100%",
+      height: "100%",
+      borderRadius: "14px",
       background: isActiveItem ? C.acc : C.bg4,
-      border:`1px solid ${isActiveItem ? C.acc : C.line}`,
-      display:"flex", alignItems:"center", justifyContent:"center",
-      transition:"background 0.15s, border-color 0.15s",
+      border: `1px solid ${isActiveItem ? C.acc : C.line}`,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      transition: "background 0.15s, border-color 0.15s",
       boxShadow: isActiveItem ? `0 0 18px ${C.accGlow}` : "none",
       color: isActiveItem ? "#fff" : C.t1,
     }}>
       {children}
       {isActiveItem && (
-        <div style={{ position:"absolute", bottom:-8, left:"50%", transform:"translateX(-50%)", width:4, height:4, borderRadius:"50%", background:C.acc }} />
+        <div style={{
+          position: "absolute",
+          bottom: -8,
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: 4, height: 4,
+          borderRadius: "50%",
+          background: C.acc,
+        }}/>
       )}
     </div>
   );
 }
 
-export function Dock({ items, activeId, spring = { mass:0.1, stiffness:150, damping:12 }, magnification = 68, distance = 200, panelHeight = 64, baseItemSize = 48 }) {
-  const mouseX   = useMotionValue(Infinity);
-  const isHov    = useMotionValue(0);
-  const maxH     = useMemo(() => Math.max(256, magnification + magnification / 2 + 4), [magnification]);
-  const hTarget  = useTransform(isHov, [0,1], [panelHeight, maxH]);
-  const height   = useSpring(hTarget, spring);
+export function Dock({
+  items,
+  activeId,
+  spring = { mass:0.1, stiffness:150, damping:12 },
+  magnification = 68,
+  distance = 200,
+  panelHeight = 64,
+  baseItemSize = 48,
+}) {
+  const mouseX  = useMotionValue(Infinity);
+  const isHov   = useMotionValue(0);
+  const maxH    = useMemo(() => Math.max(256, magnification + magnification / 2 + 4), [magnification]);
+  const hTarget = useTransform(isHov, [0,1], [panelHeight, maxH]);
+  const height  = useSpring(hTarget, spring);
+
   return (
-    <motion.div style={{ height, overflow:"hidden", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
+    // Outer container: overflow visible so tooltips appear above
+    <motion.div style={{ height, overflow:"visible", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
       <motion.div
         onMouseMove={({ pageX }) => { isHov.set(1); mouseX.set(pageX); }}
         onMouseLeave={() => { isHov.set(0); mouseX.set(Infinity); }}
         style={{
-          height:panelHeight, display:"flex", alignItems:"flex-end", gap:8,
-          background:C.bg2+"e8", backdropFilter:"blur(28px)",
-          border:`1px solid ${C.lineH}`, borderRadius:"18px",
-          padding:"8px 16px",
-          boxShadow:`0 8px 40px rgba(0,0,0,0.8), 0 0 0 1px ${C.line}`,
+          height: panelHeight,
+          display: "flex",
+          alignItems: "flex-end",
+          gap: 8,
+          background: C.bg2 + "e8",
+          backdropFilter: "blur(28px)",
+          border: `1px solid ${C.lineH}`,
+          borderRadius: "18px",
+          padding: "8px 16px",
+          boxShadow: `0 8px 40px rgba(0,0,0,0.8), 0 0 0 1px ${C.line}`,
+          // overflow visible so tooltip labels extend above the panel
+          overflow: "visible",
         }}
-        role="toolbar" aria-label="Navigation"
+        role="toolbar"
+        aria-label="Navigation"
       >
         {items.map((item, i) => (
-          <DockItem key={i} onClick={item.onClick} mouseX={mouseX} spring={spring}
-            distance={distance} magnification={magnification} baseItemSize={baseItemSize}
+          <DockItem
+            key={i}
+            onClick={item.onClick}
+            mouseX={mouseX}
+            spring={spring}
+            distance={distance}
+            magnification={magnification}
+            baseItemSize={baseItemSize}
             isActiveItem={activeId === item.id}
           >
             <DockIcon isActiveItem={activeId === item.id}>{item.icon}</DockIcon>

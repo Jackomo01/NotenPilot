@@ -97,7 +97,6 @@ const CustomCursor = () => {
 
   return (
     <>
-      {/* Trailing ring */}
       <div ref={ringRef} style={{
         position:"fixed", top:0, left:0, width:40, height:40, borderRadius:"50%",
         border:`1.5px solid ${hovered ? C.accH : C.acc}90`,
@@ -106,7 +105,6 @@ const CustomCursor = () => {
         willChange:"transform",
         mixBlendMode:"screen",
       }}/>
-      {/* Instant dot */}
       <div ref={dotRef} style={{
         position:"fixed", top:0, left:0, width:8, height:8, borderRadius:"50%",
         background: hovered ? C.accH : C.acc,
@@ -119,8 +117,9 @@ const CustomCursor = () => {
 };
 
 // ─── Animated stat counter ────────────────────────────────────────────────────
-const StatCounter = ({ value, label, delay = 0, last = false }) => {
-  const [count, setCount] = useState(0);
+// Supports counting up (from→to) or down (from→to where from > to)
+const StatCounter = ({ to, from = 0, suffix = "", label, delay = 0, last = false }) => {
+  const [count, setCount] = useState(from);
   const [inView, setInView] = useState(false);
   const ref = useRef(null);
 
@@ -132,27 +131,23 @@ const StatCounter = ({ value, label, delay = 0, last = false }) => {
 
   useEffect(() => {
     if (!inView) return;
-    const end = parseInt(value) || 0;
-    if (!end) return;
-    const start = Date.now() + delay;
-    const duration = 1100;
+    const startTime = Date.now() + delay;
+    const duration = 1300;
     const tick = () => {
-      const elapsed = Date.now() - start;
+      const elapsed = Date.now() - startTime;
       if (elapsed < 0) { requestAnimationFrame(tick); return; }
       const p = Math.min(elapsed / duration, 1);
       const eased = 1 - (1 - p) ** 3;
-      setCount(Math.round(eased * end));
+      setCount(Math.round(from + (to - from) * eased));
       if (p < 1) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
   }, [inView]);
 
-  const displayValue = parseInt(value) ? `${count}${value.includes("+") ? "+" : ""}` : value;
-
   return (
     <div ref={ref} style={{ textAlign:"center", flex:1, padding:"32px 24px", borderRight: last ? "none" : `1px solid ${C.line}` }}>
       <div style={{ fontSize:40, fontWeight:900, color:C.t0, letterSpacing:"-0.05em", lineHeight:1, marginBottom:6 }}>
-        {displayValue}
+        {count}{suffix}
       </div>
       <div style={{ fontSize:11, color:C.t2, fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase" }}>{label}</div>
     </div>
@@ -533,12 +528,18 @@ const Landing = memo(({ onLogin, onRegister }) => {
       {/* MOCK PREVIEW */}
       <MockPreview vis={vis} />
 
-      {/* STATS ROW */}
+      {/* STATS ROW — drei neue Kästen */}
       <div style={{ maxWidth:900, margin:"0 auto 90px", padding:"0 60px" }}>
         <div style={{ display:"flex", background:C.bg2, border:`1px solid ${C.line}`, borderRadius:R.xl, overflow:"hidden" }}>
-          {[["8+","Notentypen",0,false],["100%","Lokal & privat",200,false],["0€","Für immer kostenlos",400,true]].map(([v,l,d,last]) => (
-            <StatCounter key={l} value={v} label={l} delay={d} last={last} />
-          ))}
+          {/* Karte 1: ∞ Notentypen — statisches Symbol */}
+          <div style={{ textAlign:"center", flex:1, padding:"32px 24px", borderRight:`1px solid ${C.line}` }}>
+            <div style={{ fontSize:44, fontWeight:900, color:C.t0, letterSpacing:"-0.04em", lineHeight:1, marginBottom:6 }}>∞</div>
+            <div style={{ fontSize:11, color:C.t2, fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase" }}>Notentypen</div>
+          </div>
+          {/* Karte 2: 100% Datenschutz — zählt von 0 auf 100 */}
+          <StatCounter from={0} to={100} suffix="%" label="Datenschutz" delay={150} />
+          {/* Karte 3: 0€ für immer kostenlos — zählt von 100 auf 0 */}
+          <StatCounter from={100} to={0} suffix="€" label="Für immer kostenlos" delay={300} last />
         </div>
       </div>
 

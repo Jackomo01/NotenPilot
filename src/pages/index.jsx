@@ -135,7 +135,11 @@ export const StatsPage = memo(() => {
 
   const ld = useMemo(() => {
     const s = [...fil].sort((a,b) => new Date(a.date)-new Date(b.date));
-    return s.map((g,i) => ({ datum:g.date.slice(5), Note:g.grade, Schnitt:wAvg(s.slice(0,i+1)) }));
+    return s.map((g,i) => {
+      const parts = g.date.split("-");
+      const datum = parts.length === 3 ? `${parts[2]}.${parts[1]}.` : g.date.slice(5);
+      return { datum, Note:g.grade, Schnitt:wAvg(s.slice(0,i+1)) };
+    });
   }, [fil]);
 
   // Notes by type breakdown
