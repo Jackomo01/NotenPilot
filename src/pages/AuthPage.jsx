@@ -1,9 +1,10 @@
-import { useState, useRef, memo, useCallback } from "react";
+import { useState, useRef, memo, useCallback, useEffect } from "react";
 import { motion } from "framer-motion";
 import { C, R } from "../utils/tokens.jsx";
 import { SparkBtn, Card, Lbl, HR, TxtInp, baseInpStyle } from "../components/ui.jsx";
 import { VariableProximity, ClickSpark } from "../animations/index.jsx";
 import { useToast } from "../context/index.jsx";
+import { signInWithGoogle, initializeGoogleAuth } from "../utils/firebase.js";
 
 const AuthPage = memo(({ onAuth }) => {
   const [mode, setMode]       = useState("login");
@@ -14,6 +15,11 @@ const AuthPage = memo(({ onAuth }) => {
   const [loading, setLoad]    = useState(false);
   const toast = useToast();
   const pageRef = useRef(null);
+
+  // Initialize Google Auth on component mount
+  useEffect(() => {
+    initializeGoogleAuth().catch(e => console.error("Failed to initialize Google Auth:", e));
+  }, []);
 
   const validate = () => {
     if (!email.includes("@"))                { setErr("Bitte gib eine gültige E-Mail ein."); return false; }
@@ -33,17 +39,23 @@ const AuthPage = memo(({ onAuth }) => {
     setLoad(false);
   }, [loading, email, passVal, name, mode]);
 
-  // Google auth — only fires when explicitly called
+  // Google auth — with real Firebase integration
   const googleAuth = useCallback(async (e) => {
     // Prevent any event bubbling triggering this unintentionally
     e.stopPropagation();
     if (loading) return;
-    setLoad(true); setErr("");
-    await new Promise(r => setTimeout(r, 1000));
-    toast("Mit Google angemeldet!");
-    onAuth({ email: "nutzer@gmail.com", name: "Schüler", google: true, isNew: false });
-    setLoad(false);
-  }, [loading]);
+    setLoad(true);
+    setErr("");
+    
+    try {
+      const userData = await signInWithGoogle();
+      toast("Mit Google angemeldet!");
+      onAuth(userData);
+    } catch (error) {
+      setErr(error.message || "Google-Anmeldung fehlgeschlagen. Bitte versuche es später erneut.");
+      setLoad(false);
+    }
+  }, [loading, toast, onAuth]);
 
   return (
     <div
