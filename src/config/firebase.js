@@ -1,12 +1,9 @@
-// Firebase Configuration
-// Replace these values with your Firebase project credentials from https://console.firebase.google.com/
-
 export const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "YOUR_API_KEY",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "YOUR_AUTH_DOMAIN",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "YOUR_PROJECT_ID",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "YOUR_STORAGE_BUCKET",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "YOUR_MESSAGING_SENDER_ID",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "YOUR_APP_ID",
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "YOUR_MEASUREMENT_ID",
+  apiKey: "AIzaSyAV-w5JaWDG40ZZIqg2i1ndxqvY9zT2Z18",
+  authDomain: "notenpilot.firebaseapp.com",
+  projectId: "notenpilot",
+  storageBucket: "notenpilot.firebasestorage.app",
+  messagingSenderId: "212077617360",
+  appId: "1:212077617360:web:54bebc3b8fd38447b0fed5",
+  measurementId: "G-PYM2H4R0FT",
 };

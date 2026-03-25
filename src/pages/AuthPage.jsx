@@ -4,7 +4,12 @@ import { C, R } from "../utils/tokens.jsx";
 import { SparkBtn, Card, Lbl, HR, TxtInp, baseInpStyle } from "../components/ui.jsx";
 import { VariableProximity, ClickSpark } from "../animations/index.jsx";
 import { useToast } from "../context/index.jsx";
-import { signInWithGoogle, initializeGoogleAuth } from "../utils/firebase.js";
+import {
+  signInWithGoogle,
+  initializeGoogleAuth,
+  signInWithEmailPassword,
+  registerWithEmailPassword,
+} from "../utils/firebase.js";
 
 const AuthPage = memo(({ onAuth }) => {
   const [mode, setMode]       = useState("login");
@@ -31,13 +36,21 @@ const AuthPage = memo(({ onAuth }) => {
   const submit = useCallback(async () => {
     if (loading) return;
     if (!validate()) return;
-    setLoad(true); setErr("");
-    await new Promise(r => setTimeout(r, 800));
-    const displayName = name || email.split("@")[0];
-    toast(mode === "login" ? "Willkommen zurück!" : "Konto erstellt!");
-    onAuth({ email, name: displayName, isNew: mode === "register" });
-    setLoad(false);
-  }, [loading, email, passVal, name, mode]);
+    setLoad(true);
+    setErr("");
+
+    try {
+      const userData = mode === "login"
+        ? await signInWithEmailPassword(email, passVal)
+        : await registerWithEmailPassword(email, passVal, name);
+
+      toast(mode === "login" ? "Willkommen zurueck!" : "Konto erstellt!");
+      onAuth(userData);
+    } catch (error) {
+      setErr(error.message || "Anmeldung fehlgeschlagen. Bitte versuche es erneut.");
+      setLoad(false);
+    }
+  }, [loading, email, passVal, name, mode, toast, onAuth]);
 
   // Google auth — with real Firebase integration
   const googleAuth = useCallback(async (e) => {
