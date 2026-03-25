@@ -8,11 +8,13 @@ import {
   signInWithEmailAndPassword,
   updateProfile,
 } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
 import { firebaseConfig } from "../config/firebase.js";
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
+export const firestore = getFirestore(app);
 
 // Initialize Google Provider
 const googleProvider = new GoogleAuthProvider();

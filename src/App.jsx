@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 
 import { AppCtx, ToastProvider } from "./context/index.jsx";
@@ -16,6 +16,8 @@ import Landing   from "./pages/Landing.jsx";
 import AuthPage  from "./pages/AuthPage.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import { GradesPage, StatsPage, SettingsPage } from "./pages/index.jsx";
+import { saveUserCloudData, subscribeUserCloudData } from "./utils/cloudData.js";
+import { signOutUser } from "./utils/firebase.js";
 
 const GlobalStyles = () => (
   <style>{`
@@ -70,6 +72,8 @@ function AppShell() {
   const [addOpen,     setAddOpen]     = useState(false);
   const [loading,     setLoading]     = useState(true);
   const [highlightId, setHighlightId] = useState(null);
+  const cloudReadyRef = useRef(false);
+  const lastCloudSigRef = useRef("");
 
   useEffect(() => {
     if (user) setView("app");
@@ -78,10 +82,74 @@ function AppShell() {
     return () => clearTimeout(t);
   }, []);
 
+  useEffect(() => {
+    if (!user?.uid) {
+      cloudReadyRef.current = false;
+      lastCloudSigRef.current = "";
+      return;
+    }
+
+    cloudReadyRef.current = false;
+
+    const unsub = subscribeUserCloudData(
+      user.uid,
+      async (remoteData) => {
+        if (!remoteData) {
+          const initialPayload = { grades: [], subjects: [...SEED_SUBJECTS] };
+          const initialSig = JSON.stringify(initialPayload);
+          await saveUserCloudData(user.uid, initialPayload);
+          setGrades(initialPayload.grades);
+          setSubjects(initialPayload.subjects);
+          lastCloudSigRef.current = initialSig;
+          cloudReadyRef.current = true;
+          return;
+        }
+
+        const remoteSig = JSON.stringify(remoteData);
+        lastCloudSigRef.current = remoteSig;
+        setGrades(remoteData.grades);
+        setSubjects(remoteData.subjects);
+        cloudReadyRef.current = true;
+      },
+      (err) => {
+        console.error("Cloud sync subscribe failed:", err);
+        cloudReadyRef.current = true;
+      }
+    );
+
+    return () => unsub();
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid || !cloudReadyRef.current) return;
+
+    const localPayload = { grades, subjects };
+    const localSig = JSON.stringify(localPayload);
+    if (localSig === lastCloudSigRef.current) return;
+
+    saveUserCloudData(user.uid, localPayload)
+      .then(() => {
+        lastCloudSigRef.current = localSig;
+      })
+      .catch((err) => {
+        console.error("Cloud save failed:", err);
+      });
+  }, [user?.uid, grades, subjects]);
+
   const ctx = useMemo(() => ({ grades, setGrades, subjects, setSubjects }), [grades, setGrades, subjects, setSubjects]);
 
   const handleAuth   = u => { setUser(u); setView("app"); };
-  const handleLogout = () => { setUser(null); setView("landing"); };
+  const handleLogout = async () => {
+    try {
+      await signOutUser();
+    } catch (err) {
+      console.error("Logout failed:", err);
+    }
+    setGrades([]);
+    setSubjects([...SEED_SUBJECTS]);
+    setUser(null);
+    setView("landing");
+  };
 
   // Called from SearchBar when user clicks a search result
   const handleSearchSelect = useCallback((gradeId) => {
