@@ -5,7 +5,7 @@ import { useApp } from "../context/index.jsx";
 import { useToast } from "../context/index.jsx";
 import { wAvg, fDE, gc, toStr } from "../utils/helpers.jsx";
 import { C, R, ARTEN } from "../utils/tokens.jsx";
-import { SparkBtn, Card, Lbl, HR, Bdg, SelInp, Modal } from "../components/ui.jsx";
+import { SparkBtn, Card, Lbl, HR, Bdg, SelInp, Modal, baseInpStyle } from "../components/ui.jsx";
 import { ChartTip } from "../components/ui.jsx";
 import GradeForm from "../components/GradeForm.jsx";
 
@@ -118,6 +118,16 @@ const NoteChart = ({ data, avgColor, height = 210 }) => {
     </ResponsiveContainer>
   );
 };
+
+const getDefaultWeight = (type) => type === "Schulaufgabe" ? 2 : 1;
+const SIM_WEIGHTS = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
+const snapGrade = (value) => {
+  const v = Math.min(6, Math.max(1, value));
+  const nearest = Math.round(v);
+  if (Math.abs(v - nearest) <= 0.12) return nearest;
+  return Math.round(v * 100) / 100;
+};
+const fmtGrade = (value) => value.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 2 });
 
 
 
@@ -234,6 +244,12 @@ export const GradesPage = memo(({ onAdd, highlightId }) => {
 export const StatsPage = memo(() => {
   const { grades, subjects } = useApp();
   const [period, setPeriod] = useState("all");
+  const [simOpen, setSimOpen] = useState(false);
+  const [simSubject, setSimSubject] = useState("");
+  const [simType, setSimType] = useState("Ausfrage");
+  const [simWeight, setSimWeight] = useState(1);
+  const [simGrade, setSimGrade] = useState(2.0);
+  const [simGradeInput, setSimGradeInput] = useState("2,0");
 
   const fil = useMemo(() => {
     const d = {"7d":7,"30d":30,"all":Infinity}[period];
@@ -247,6 +263,47 @@ export const StatsPage = memo(() => {
     }).filter(s => s.avg != null).sort((a,b) => a.avg - b.avg),
     [fil, subjects]
   );
+
+  const allSStats = useMemo(() =>
+    subjects.map(s => {
+      const sg = grades.filter(g => g.subject === s);
+      return { name:s, avg:wAvg(sg), count:sg.length };
+    }).filter(s => s.avg != null).sort((a,b) => a.avg - b.avg),
+    [grades, subjects]
+  );
+
+  const visibleSStats = sStats.length ? sStats : allSStats;
+
+  useEffect(() => {
+    if (!subjects.length) {
+      setSimSubject("");
+      return;
+    }
+    if (!simSubject || !subjects.includes(simSubject)) setSimSubject(subjects[0]);
+  }, [simSubject, subjects]);
+
+  useEffect(() => {
+    setSimWeight(getDefaultWeight(simType));
+  }, [simType]);
+
+  const simSubjectGrades = useMemo(
+    () => simSubject ? fil.filter(g => g.subject === simSubject) : [],
+    [simSubject, fil]
+  );
+
+  const currentSubjectAvg = useMemo(() => wAvg(simSubjectGrades), [simSubjectGrades]);
+
+  const simulatedAvg = useMemo(() => {
+    if (!simSubject) return null;
+    return wAvg([
+      ...simSubjectGrades,
+      { subject: simSubject, grade: simGrade, weight: simWeight, type: simType }
+    ]);
+  }, [simSubject, simSubjectGrades, simGrade, simWeight, simType]);
+
+  useEffect(() => {
+    setSimGradeInput(fmtGrade(simGrade));
+  }, [simGrade]);
 
   const ld = useMemo(() => {
     const s = [...fil].sort((a,b) => new Date(a.date)-new Date(b.date));
@@ -334,7 +391,7 @@ export const StatsPage = memo(() => {
       </div>
 
       {/* 4 KPI cards — alle mit passendem Gradient */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12}}>
         <Card pad="20px 22px" style={{position:"relative",overflow:"hidden"}}>
           <div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at top right,${avgColor}18 0%,transparent 70%)`,pointerEvents:"none"}}/>
           <Lbl>Durchschnitt</Lbl>
@@ -369,7 +426,8 @@ export const StatsPage = memo(() => {
           ) : <div style={{fontSize:13,color:C.t2,marginTop:6}}>Keine</div>}
         </Card>
       </div>      {/* Trend chart + Leistungsarten */}
-      <div style={{display:"grid",gridTemplateColumns:"3fr 2fr",gap:12}}>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:12}}>
         <Card pad="22px">
           <div style={{fontSize:13,fontWeight:600,color:C.t0,marginBottom:14}}>Notenverlauf</div>
           {ld.length>=2 ? (
@@ -377,33 +435,138 @@ export const StatsPage = memo(() => {
           ) : <div style={{height:210,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:C.t2}}>Nicht genug Daten</div>}
         </Card>
 
-        <Card pad="22px">
-          <div style={{fontSize:13,fontWeight:600,color:C.t0,marginBottom:14}}>Leistungsarten</div>
-          {byType.length > 0 ? (
-            <div style={{display:"flex",flexDirection:"column",gap:6}}>
-              {byType.map((t,i) => (
-                <div key={t.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 11px",background:C.bg3,borderRadius:R.s}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <div style={{width:6,height:6,borderRadius:"50%",background:[C.acc,C.g1,C.g3,C.g4,C.g5,C.accH][i%6]}}/>
-                    <span style={{fontSize:12,color:C.t1}}>{t.name}</span>
+        <div style={{display:"grid",gap:12,alignContent:"start"}}>
+          <Card pad="22px">
+            <div style={{fontSize:13,fontWeight:600,color:C.t0,marginBottom:14}}>Leistungsarten</div>
+            {byType.length > 0 ? (
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {byType.map((t,i) => (
+                  <div key={t.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 11px",background:C.bg3,borderRadius:R.s}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <div style={{width:6,height:6,borderRadius:"50%",background:[C.acc,C.g1,C.g3,C.g4,C.g5,C.accH][i%6]}}/>
+                      <span style={{fontSize:12,color:C.t1}}>{t.name}</span>
+                    </div>
+                    <span style={{fontSize:13,fontWeight:700,color:C.t0}}>{t.count}</span>
                   </div>
-                  <span style={{fontSize:13,fontWeight:700,color:C.t0}}>{t.count}</span>
+                ))}
+              </div>
+            ) : <div style={{fontSize:13,color:C.t2}}>Keine Daten</div>}
+          </Card>
+
+          {subjects.length > 0 && (
+            <Card pad="14px 16px">
+              <button
+                type="button"
+                onClick={() => setSimOpen(v => !v)}
+                style={{
+                  width:"100%",
+                  display:"flex",
+                  justifyContent:"space-between",
+                  alignItems:"center",
+                  border:"none",
+                  background:"transparent",
+                  color:C.t0,
+                  cursor:"pointer",
+                  padding:0,
+                  fontFamily:"inherit"
+                }}
+              >
+                <span style={{fontSize:13,fontWeight:600}}>Nächste Note simulieren</span>
+                <span style={{fontSize:12,color:C.t1}}>{simOpen ? "Einklappen" : "Ausklappen"}</span>
+              </button>
+
+              {simOpen && (
+                <div style={{marginTop:12}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,marginBottom:10,flexWrap:"wrap"}}>
+                    <div style={{fontSize:12,color:C.t1}}>
+                      Schnitt: <span style={{color:currentSubjectAvg != null ? gc(currentSubjectAvg) : C.t2, fontWeight:700}}>{currentSubjectAvg != null ? currentSubjectAvg.toFixed(2).replace(".",",") : "-"}</span>
+                      <span style={{margin:"0 6px",color:C.t2}}>→</span>
+                      <span style={{color:simulatedAvg != null ? gc(simulatedAvg) : C.t2, fontWeight:800}}>{simulatedAvg != null ? simulatedAvg.toFixed(2).replace(".",",") : "-"}</span>
+                    </div>
+                  </div>
+
+                  <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr",gap:10,marginBottom:8}}>
+                    <div>
+                      <Lbl>Fach</Lbl>
+                      <SelInp value={simSubject} onChange={(e) => setSimSubject(e.target.value)} options={subjects} />
+                    </div>
+                    <div>
+                      <Lbl>Note</Lbl>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={simGradeInput}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (/^[0-9]*[.,]?[0-9]*$/.test(raw) || raw === "") setSimGradeInput(raw);
+                        }}
+                        onBlur={() => {
+                          const parsed = parseFloat(simGradeInput.replace(",", "."));
+                          if (Number.isFinite(parsed)) {
+                            setSimGrade(snapGrade(parsed));
+                          } else {
+                            setSimGradeInput(fmtGrade(simGrade));
+                          }
+                        }}
+                        placeholder="z.B. 3,32"
+                        style={{ ...baseInpStyle(false), height:42, fontWeight:700, color:gc(simGrade) }}
+                      />
+                    </div>
+                  </div>
+
+                  <input
+                    type="range"
+                    min={1}
+                    max={6}
+                    step={0.01}
+                    value={simGrade}
+                    onInput={(e) => setSimGrade(snapGrade(Number(e.target.value)))}
+                    aria-label="Simulierte Note"
+                    style={{ width:"100%", accentColor:C.acc, cursor:"pointer", marginBottom:8 }}
+                  />
+
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",fontSize:10,color:C.t2,marginBottom:10}}>
+                    {[1,2,3,4,5,6].map(n => <span key={n} style={{textAlign:"center"}}>{n}</span>)}
+                  </div>
+
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 150px",gap:10}}>
+                    <div>
+                      <Lbl>Notenart</Lbl>
+                      <SelInp value={simType} onChange={(e) => setSimType(e.target.value)} options={ARTEN} />
+                    </div>
+                    <div>
+                      <Lbl>Gewichtung</Lbl>
+                      <SelInp
+                        value={simWeight}
+                        onChange={(e) => setSimWeight(Number(e.target.value))}
+                        options={SIM_WEIGHTS.map(w => ({ value:w, label:`x${w}` }))}
+                      />
+                    </div>
+                  </div>
                 </div>
-              ))}
-            </div>
-          ) : <div style={{fontSize:13,color:C.t2}}>Keine Daten</div>}
-        </Card>
+              )}
+            </Card>
+          )}
+        </div>
       </div>
 
       {/* Fachdetails — grade-color gradient per card */}
-      {sStats.length > 0 && (
+      {subjects.length > 0 && (
         <Card pad="22px">
-          <div style={{fontSize:13,fontWeight:600,color:C.t0,marginBottom:14}}>Fachdetails</div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+            <div style={{fontSize:13,fontWeight:600,color:C.t0}}>Fachdetails</div>
+            {sStats.length === 0 && allSStats.length > 0 && (
+              <span style={{fontSize:11,color:C.t2}}>Zeitraum leer - zeige Gesamtwerte</span>
+            )}
+          </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>
-            {sStats.map(s => {
+            {visibleSStats.map(s => {
               const col = gc(s.avg);
               return (
-                <div key={s.name} style={{background:C.bg3,borderRadius:R.l,padding:"16px 18px",border:`1px solid ${C.line}`,position:"relative",overflow:"hidden"}}>
+                <div
+                  key={s.name}
+                  style={{background:C.bg3,borderRadius:R.l,padding:"16px 18px",border:`1px solid ${C.line}`,position:"relative",overflow:"hidden"}}
+                >
                   <div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at top right,${col}16 0%,transparent 70%)`,pointerEvents:"none"}}/>
                   <div style={{fontSize:11,color:C.t1,fontWeight:600,marginBottom:6,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
                   <div style={{fontSize:28,fontWeight:900,color:col,letterSpacing:"-0.05em",lineHeight:1}}>{s.avg.toFixed(2)}</div>
