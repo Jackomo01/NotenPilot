@@ -58,12 +58,20 @@ const GradeForm = memo(({ onClose, editItem }) => {
     onClose();
   };
 
+  const onEnterSubmit = (e) => {
+    if (e.key !== "Enter") return;
+    if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.target.closest("[data-no-enter-submit='true']")) return;
+    e.preventDefault();
+    submit();
+  };
+
   const isSchulaufgabe = form.type === "Schulaufgabe";
 
   return (
-    <div>
+    <div onKeyDown={onEnterSubmit}>
       {/* Fach */}
-      <div style={{ marginBottom: 18 }}>
+      <div style={{ marginBottom: 18 }} data-no-enter-submit="true">
         <Lbl>Fach</Lbl>
         {/* autoFocus entfernt — kein automatisches Fokussieren beim Öffnen */}
         <Combobox value={form.subject} onChange={set("subject")} options={subjects} placeholder="Fach eingeben oder wählen…" />
