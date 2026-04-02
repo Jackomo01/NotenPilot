@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLS } from "../hooks/index.jsx";
 import { buildAIContext, getSuggestions, streamChatAnswer } from "../utils/ai.jsx";
-import { consumeUserQuestionQuota, getUserQuestionQuota, loadUserCloudData } from "../utils/cloudData.js";
+import { consumeUserQuestionQuota, loadUserCloudData } from "../utils/cloudData.js";
 import { C, R } from "../utils/tokens.jsx";
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -68,33 +68,6 @@ const AIMascotDrawer = memo(({
     if (!setAskedQuestions) return;
     setAskedQuestions([]);
   }, [user?.uid, setAskedQuestions]);
-
-  useEffect(() => {
-    let active = true;
-    if (!setQuestionsRemaining) return () => {
-      active = false;
-    };
-    if (!user?.uid) {
-      setQuestionsRemaining(null);
-      return () => {
-        active = false;
-      };
-    }
-
-    getUserQuestionQuota(user.uid, 3)
-      .then((quota) => {
-        if (!active) return;
-        setQuestionsRemaining(quota.remaining);
-      })
-      .catch(() => {
-        if (!active) return;
-        setQuestionsRemaining(null);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [user?.uid, setQuestionsRemaining]);
 
   const currentSuggestions = useMemo(() => getSuggestions(liveContext, askedQuestions), [liveContext, askedQuestions]);
   const sparklinePath = useMemo(() => buildSparklinePath(liveContext?.grades || []), [liveContext?.grades]);

@@ -6,6 +6,7 @@ import { useCountUp } from "../hooks/index.jsx";
 import { wAvg, fDE, gc, gl } from "../utils/helpers.jsx";
 import { C, R } from "../utils/tokens.jsx";
 import { Sk, Card, Lbl, ChartTip } from "../components/ui.jsx";
+import { buildAIContext, dashboardInsight } from "../utils/ai.jsx";
 
 const AnimNum = ({ to, dec=0 }) => { const v = useCountUp(to??0); return <span>{v.toFixed(dec)}</span>; };
 
@@ -151,6 +152,8 @@ const Dashboard = memo(({ loading, user }) => {
   const best  = sStats[0];
   const worst = sStats.length > 1 ? sStats[sStats.length-1] : null;
   const avgColor = avg ? gc(avg) : C.t2;
+  const aiCtx = useMemo(() => buildAIContext(grades, subjects), [grades, subjects]);
+  const insight = useMemo(() => dashboardInsight(aiCtx), [aiCtx]);
 
   if (loading) return (
     <div style={{ display:"grid", gap:16 }}>
@@ -166,6 +169,11 @@ const Dashboard = memo(({ loading, user }) => {
         </h2>
         <p style={{ fontSize:13, color:C.t1 }}>Dein aktueller Leistungsüberblick.</p>
       </div>
+
+      <Card pad="16px 20px" style={{ background:C.bg3, border:`1px solid ${C.line}` }}>
+        <div style={{ fontSize:11, fontWeight:700, color:C.t2, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:8 }}>AI INSIGHT</div>
+        <div style={{ fontSize:13, lineHeight:1.5, color:C.t0 }}>{insight}</div>
+      </Card>
 
       {/* 4 stat cards */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>

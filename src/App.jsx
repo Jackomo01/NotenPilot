@@ -11,6 +11,7 @@ import { Dock }      from "./animations/index.jsx";
 import { SparkBtn, Modal } from "./components/ui.jsx";
 import SearchBar     from "./components/SearchBar.jsx";
 import GradeForm     from "./components/GradeForm.jsx";
+import AIMascotDrawer from "./components/AIMascotDrawer.jsx";
 
 import Landing   from "./pages/Landing.jsx";
 import AuthPage  from "./pages/AuthPage.jsx";
@@ -72,6 +73,9 @@ function AppShell() {
   const [addOpen,     setAddOpen]     = useState(false);
   const [loading,     setLoading]     = useState(true);
   const [highlightId, setHighlightId] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [askedQuestions, setAskedQuestions] = useState([]);
+  const [questionsRemaining, setQuestionsRemaining] = useState(3);
   const cloudReadyRef = useRef(false);
   const lastCloudSigRef = useRef("");
 
@@ -185,7 +189,18 @@ function AppShell() {
       {view === "auth"    && <AuthPage onAuth={handleAuth}/>}
 
       {view === "app" && (
-        <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", width:"100%" }}>
+        <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", width:"100%", position:"relative" }}>
+          <AIMascotDrawer 
+            grades={grades} 
+            subjects={subjects} 
+            user={user}
+            messages={messages}
+            setMessages={setMessages}
+            askedQuestions={askedQuestions}
+            setAskedQuestions={setAskedQuestions}
+            questionsRemaining={questionsRemaining}
+            setQuestionsRemaining={setQuestionsRemaining}
+          />
           <div style={{
             position:"sticky", top:0, zIndex:100,
             background:"#07070cf0", backdropFilter:"blur(20px)",

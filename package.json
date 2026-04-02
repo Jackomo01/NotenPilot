@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "ai:proxy": "node server/openrouter-proxy.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.2.0",
