@@ -13,6 +13,7 @@ const AIPage = memo(({
   setMessages,
   seedPrompt,
   onSeedConsumed,
+  cloudSynced = true,
   askedQuestions = [],
   setAskedQuestions,
   questionsRemaining,
@@ -39,6 +40,18 @@ const AIPage = memo(({
   const send = async (forcedPrompt) => {
     const prompt = (forcedPrompt ?? input).trim();
     if (!prompt || sending) return;
+
+    if (user?.uid && !cloudSynced) {
+      setMessages((prev) => [...prev, {
+        id: `as_${Date.now()}`,
+        role: "assistant",
+        text: "Bitte kurz warten: Deine Daten werden noch mit der Cloud synchronisiert.",
+        ts: Date.now(),
+        streaming: false,
+        followUps: [],
+      }]);
+      return;
+    }
 
     const hasAsked = (askedQuestions || []).some((q) => normalizeQ(q) === normalizeQ(prompt));
     const nextAsked = hasAsked ? askedQuestions : [...(askedQuestions || []), prompt];
@@ -129,7 +142,7 @@ const AIPage = memo(({
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} style={{ display: "grid", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <h2 style={{ fontSize: 20, fontWeight: 700, color: C.t0, letterSpacing: "-0.02em", marginBottom: 3 }}>AI Analyse</h2>
+          <h2 style={{ fontSize: 20, fontWeight: 700, color: C.t0, letterSpacing: "-0.02em", marginBottom: 3 }}>AI PILOT</h2>
           {!!engineProgress && <p style={{ fontSize: 11, color: C.t2, marginTop: 4 }}>{engineProgress}</p>}
           {Number.isFinite(questionsRemaining) && (
             <p style={{
@@ -175,7 +188,7 @@ const AIPage = memo(({
         <div ref={listRef} style={{ maxHeight: 420, overflowY: "auto", padding: "16px 16px 10px", display: "grid", gap: 10 }}>
           {messages.length === 0 && (
             <div style={{ fontSize: 13, color: C.t2, padding: "8px 4px" }}>
-              Starte mit einer Frage wie: "Was ist mein nächster sinnvoller Lernschritt in Mathe?"
+              Starte mit einer Frage wie: "Welche Note habe ich im März in Mathe geschrieben?"
             </div>
           )}
 
@@ -252,7 +265,7 @@ const AIPage = memo(({
                 send();
               }
             }}
-            placeholder="Frag etwas zu deinem Lernfortschritt..."
+            placeholder="Frag etwas zu Trends, Daten oder Was-wäre-wenn-Szenarien..."
             style={{
               flex: 1,
               background: C.bg4,

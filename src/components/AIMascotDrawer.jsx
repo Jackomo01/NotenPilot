@@ -37,6 +37,7 @@ const AIMascotDrawer = memo(({
   grades,
   subjects,
   user,
+  cloudSynced = true,
   messages,
   setMessages,
   askedQuestions = [],
@@ -96,6 +97,18 @@ const AIMascotDrawer = memo(({
   const send = async (forcedPrompt) => {
     const prompt = String(forcedPrompt ?? input).trim();
     if (!prompt || sending) return;
+
+    if (user?.uid && !cloudSynced) {
+      setMessages((prev) => [...prev, {
+        id: `ws_${Date.now()}`,
+        role: "assistant",
+        text: "Bitte kurz warten: Deine Daten werden noch mit der Cloud synchronisiert.",
+        ts: Date.now(),
+        streaming: false,
+        followUps: [],
+      }]);
+      return;
+    }
 
     const hasAsked = (askedQuestions || []).some((q) => normalizeQ(q) === normalizeQ(prompt));
     const nextAsked = hasAsked ? askedQuestions : [...(askedQuestions || []), prompt];
@@ -335,8 +348,8 @@ const AIMascotDrawer = memo(({
               userSelect: "none",
             }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, color: C.t0, fontWeight: 800, letterSpacing: "-0.01em" }}>Plane deine nächste Lernstrategie!</div>
-                <div style={{ fontSize: 11, color: C.t1, marginTop: 2 }}>Dein persönlicher Noten-Coach</div>
+                <div style={{ fontSize: 13, color: C.t0, fontWeight: 800, letterSpacing: "-0.01em" }}>Analysiere Trends, Daten und Szenarien.</div>
+                <div style={{ fontSize: 11, color: C.t1, marginTop: 2, fontWeight: 700, letterSpacing: "0.04em" }}>AI PILOT</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                   <div style={{
                     display: "inline-flex",
@@ -397,7 +410,7 @@ const AIMascotDrawer = memo(({
                   marginTop: "auto",
                   marginBottom: "auto",
                 }}>
-                  Was möchtest du über deinen Lernfortschritt wissen?
+                  Was möchtest du über deine Noten-Daten wissen?
                 </div>
               )}
 
@@ -410,7 +423,7 @@ const AIMascotDrawer = memo(({
                   <div style={{ fontSize: 10, color: C.t2, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase" }}>
                     Intelligente Kurzfragen
                   </div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <div style={{ display: "grid", gap: 6, gridTemplateColumns: "1fr" }}>
                   {currentSuggestions.slice(0, 3).map((f) => (
                     <button
                       key={f}
@@ -423,6 +436,10 @@ const AIMascotDrawer = memo(({
                         borderRadius: R.m,
                         padding: "9px 12px",
                         minHeight: 40,
+                        width: "100%",
+                        textAlign: "left",
+                        whiteSpace: "normal",
+                        lineHeight: 1.35,
                         cursor: "pointer",
                         fontFamily: "inherit",
                         fontWeight: 500,
@@ -440,42 +457,6 @@ const AIMascotDrawer = memo(({
                       {f}
                     </button>
                   ))}
-                  </div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    <button
-                      onClick={() => send("Erstelle mir eine kurze Übungsaufgabe für mein aktuelles Problemfach.")}
-                      style={{
-                        border: `1px solid ${C.acc}55`,
-                        background: `${C.acc}1f`,
-                        color: C.accH,
-                        fontSize: 11,
-                        borderRadius: R.m,
-                        padding: "8px 10px",
-                        minHeight: 38,
-                        cursor: "pointer",
-                        fontFamily: "inherit",
-                        fontWeight: 600,
-                      }}
-                    >
-                      Zur Übung öffnen
-                    </button>
-                    <button
-                      onClick={() => send("Erstelle mir einen Wochenplan mit 3 kurzen Lerneinheiten.")}
-                      style={{
-                        border: `1px solid ${C.line}`,
-                        background: C.bg3,
-                        color: C.t1,
-                        fontSize: 11,
-                        borderRadius: R.m,
-                        padding: "8px 10px",
-                        minHeight: 38,
-                        cursor: "pointer",
-                        fontFamily: "inherit",
-                        fontWeight: 600,
-                      }}
-                    >
-                      Plan übernehmen
-                    </button>
                   </div>
                 </div>
               )}
@@ -504,9 +485,9 @@ const AIMascotDrawer = memo(({
 
               {messages.length > 0 && !sending && messages[messages.length - 1]?.role === "assistant" && (
                 <div style={{
-                  display: "flex",
+                  display: "grid",
                   gap: 6,
-                  flexWrap: "wrap",
+                  gridTemplateColumns: "1fr",
                   marginTop: 6,
                 }}>
                   {messages[messages.length - 1].followUps?.slice(0, 3).map((f) => (
@@ -521,6 +502,10 @@ const AIMascotDrawer = memo(({
                         borderRadius: R.m,
                         padding: "9px 12px",
                         minHeight: 40,
+                        width: "100%",
+                        textAlign: "left",
+                        whiteSpace: "normal",
+                        lineHeight: 1.35,
                         cursor: "pointer",
                         fontFamily: "inherit",
                         fontWeight: 500,

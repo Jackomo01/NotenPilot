@@ -233,6 +233,7 @@ const buildSystemPrompt = (context) => {
     "- Friendly, motivating, short, clear.",
     "- Always provide actionable insight, not just numbers.",
     "- Antwort immer ausschließlich auf Deutsch.",
+    "- Verwende Umlaute korrekt (ä, ö, ü) und keine ae/oe/ue-Ersatzschreibweise.",
     "- No greetings, no filler, no markdown, no emojis.",
     "",
     "NEVER:",

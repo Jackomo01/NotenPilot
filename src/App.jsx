@@ -17,7 +17,7 @@ import Landing   from "./pages/Landing.jsx";
 import AuthPage  from "./pages/AuthPage.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import { GradesPage, StatsPage, SettingsPage } from "./pages/index.jsx";
-import { saveUserCloudData, subscribeUserCloudData } from "./utils/cloudData.js";
+import { getUserQuestionQuota, saveUserCloudData, subscribeUserCloudData } from "./utils/cloudData.js";
 import { signOutUser } from "./utils/firebase.js";
 
 const GlobalStyles = () => (
@@ -76,6 +76,7 @@ function AppShell() {
   const [messages, setMessages] = useState([]);
   const [askedQuestions, setAskedQuestions] = useState([]);
   const [questionsRemaining, setQuestionsRemaining] = useState(3);
+  const [cloudSynced, setCloudSynced] = useState(false);
   const cloudReadyRef = useRef(false);
   const lastCloudSigRef = useRef("");
 
@@ -90,10 +91,12 @@ function AppShell() {
     if (!user?.uid) {
       cloudReadyRef.current = false;
       lastCloudSigRef.current = "";
+      setCloudSynced(false);
       return;
     }
 
     cloudReadyRef.current = false;
+    setCloudSynced(false);
 
     const unsub = subscribeUserCloudData(
       user.uid,
@@ -106,6 +109,7 @@ function AppShell() {
           setSubjects(initialPayload.subjects);
           lastCloudSigRef.current = initialSig;
           cloudReadyRef.current = true;
+          setCloudSynced(true);
           return;
         }
 
@@ -114,10 +118,12 @@ function AppShell() {
         setGrades(remoteData.grades);
         setSubjects(remoteData.subjects);
         cloudReadyRef.current = true;
+        setCloudSynced(true);
       },
       (err) => {
         console.error("Cloud sync subscribe failed:", err);
-        cloudReadyRef.current = true;
+        cloudReadyRef.current = false;
+        setCloudSynced(false);
       }
     );
 
@@ -139,6 +145,23 @@ function AppShell() {
         console.error("Cloud save failed:", err);
       });
   }, [user?.uid, grades, subjects]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setQuestionsRemaining(3);
+      return;
+    }
+
+    getUserQuestionQuota(user.uid, 3)
+      .then((quota) => {
+        if (Number.isFinite(quota?.remaining)) {
+          setQuestionsRemaining(quota.remaining);
+        }
+      })
+      .catch((err) => {
+        console.error("Initial quota load failed:", err);
+      });
+  }, [user?.uid]);
 
   const ctx = useMemo(() => ({ grades, setGrades, subjects, setSubjects }), [grades, setGrades, subjects, setSubjects]);
 
@@ -194,6 +217,7 @@ function AppShell() {
             grades={grades} 
             subjects={subjects} 
             user={user}
+            cloudSynced={cloudSynced}
             messages={messages}
             setMessages={setMessages}
             askedQuestions={askedQuestions}

@@ -224,28 +224,17 @@ export const buildAIContext = (grades = [], subjects = []) => {
   };
 };
 
-export const getSuggestions = (ctx, askedQuestions = []) => {
-  const asked = new Set((askedQuestions || []).map((q) => String(q || "").trim().toLowerCase()));
-  const worst = ctx?.worstSubject?.subject;
-  const best = ctx?.bestSubject?.subject;
-  const trend = Number(ctx?.trendSlope || 0);
-  const fallbackSubject = worst || best || "Dein Fokusfach";
+export const getSuggestions = (ctx) => {
+  const sampleSubject =
+    ctx?.worstSubject?.subject ||
+    ctx?.bestSubject?.subject ||
+    (Array.isArray(ctx?.subjects) && ctx.subjects.length ? String(ctx.subjects[0]) : "einem Fach");
 
-  const base = [
-    `${fallbackSubject}: Wie verbessere ich meine Note in den naechsten 2 Wochen?`,
-    trend > 0.08
-      ? `Trend fallend: Was ist gerade mein groesster Fehler?`
-      : trend < -0.08
-        ? `Trend steigend: Wie halte ich den Aufwaertstrend stabil?`
-        : "Trend instabil: Welche Gewohnheit bringt schnell Stabilitaet?",
-    `${fallbackSubject}: Welche Uebung bringt den groessten Effekt?`,
-    best ? `${best}: Wie halte ich mein Niveau konstant?` : "Wie plane ich 2 Lernsessions pro Woche sinnvoll?",
-    "Was ist mein realistisches Ziel fuer den naechsten Test?",
+  return [
+    "Welche Arbeit war meine erste Note in diesem Schuljahr?",
+    "Welche Fächer laufen bei mir am besten und welche eher schwach?",
+    `Was wäre wenn: Wie verändert sich mein ${sampleSubject}-Durchschnitt, wenn ich in der nächsten Arbeit eine 1 schreibe?`,
   ];
-
-  return base
-    .filter((q) => !asked.has(String(q).toLowerCase()))
-    .slice(0, 3);
 };
 
 export const quickSuggestions = (ctx, askedQuestions = []) => getSuggestions(ctx, askedQuestions);
@@ -510,7 +499,7 @@ const buildLLMMessages = (prompt, ctx, history = []) => {
   const system = {
     role: "system",
     content:
-      "Du bist ein Lernassistent in einer Schueler-App. Antworte auf Deutsch, kurz und klar. Maximal 3 Stichpunkte oder 2 kurze Saetze. Keine Markdown-Formatierung (kein **, *, Emojis). Keine unnuetigen Einleitungen oder Wiederholungen. Beantworte nur die aktuelle Frage. Gib nur relevante Informationen. Kontext JSON: " +
+      "Du bist ein Lernassistent in einer Schüler-App. Antworte auf Deutsch, kurz und klar. Maximal 3 Stichpunkte oder 2 kurze Sätze. Verwende Umlaute korrekt (ä, ö, ü) und nutze keine ae/oe/ue-Ersatzschreibweise. Keine Markdown-Formatierung (kein **, *, Emojis). Keine unnötigen Einleitungen oder Wiederholungen. Beantworte nur die aktuelle Frage. Gib nur relevante Informationen. Kontext JSON: " +
       JSON.stringify(compactCtx),
   };
 
@@ -711,24 +700,48 @@ export async function* streamChatAnswer(prompt, ctx, history = [], onProgress, o
 }
 
 export const dashboardInsight = (ctx) => {
-  if (!ctx.grades.length) return "Noch keine Trenddaten: Trage weitere Noten ein, dann folgt eine Prognose mit Handlungsempfehlung.";
+  if (!ctx.grades.length) return "Noch keine Trenddaten: Sobald mehr Noten vorliegen, zeigt die Analyse das Bild deutlicher.";
 
+  const grades = Array.isArray(ctx.grades) ? [...ctx.grades] : [];
+  const avg = Number(ctx.average || 0);
   const trend = Number(ctx.trendSlope || 0);
-  const trendText = trend < -0.08
-    ? "Trend: steigend"
-    : trend > 0.08
-      ? "Trend: fallend"
-      : "Trend: instabil";
+  const subject = ctx.worstSubject?.subject || ctx.bestSubject?.subject || "Deine Leistungen";
 
-  const prediction = trend < -0.08
-    ? "Wenn du so weitermachst, stabilisieren sich die naechsten Ergebnisse auf besserem Niveau."
-    : trend > 0.08
-      ? "Wenn das so weiterlaeuft, drohen in den naechsten Arbeiten schwaechere Ergebnisse."
-      : "Wenn du nichts aenderst, bleibt die Leistung voraussichtlich schwankend.";
+  const quality = avg <= 1.8 ? "insgesamt stark" : avg <= 2.8 ? "insgesamt solide" : "insgesamt eher wechselhaft";
+  const variability = (() => {
+    const values = grades.map((g) => Number(g?.grade)).filter((n) => Number.isFinite(n));
+    if (values.length < 2) return "noch nicht gut beurteilbar";
+    const range = Math.max(...values) - Math.min(...values);
+    if (range >= 4) return "schwanken deutlich";
+    if (range >= 2.5) return "schwanken merklich";
+    return "relativ stabil";
+  })();
 
-  const advice = trend > 0.08
-    ? "Empfehlung: Setze diese Woche zwei kurze Lerneinheiten direkt vor den naechsten Leistungserhebungen."
-    : "Empfehlung: Halte deinen Rhythmus bei und plane feste Wiederholungsfenster nach jeder neuen Note.";
+  const sortedByImpact = grades
+    .map((g) => ({
+      grade: Number(g?.grade),
+      weight: Number(g?.weight || 1),
+      subject: String(g?.subject || subject),
+      date: g?.date,
+    }))
+    .filter((g) => Number.isFinite(g.grade))
+    .sort((a, b) => (b.grade * b.weight) - (a.grade * a.weight) || b.weight - a.weight);
 
-  return `${trendText}. ${prediction} ${advice}`;
+  const worstGrade = sortedByImpact.find((g) => g.grade >= 5) || sortedByImpact[0];
+  const strongGrades = grades
+    .map((g) => Number(g?.grade))
+    .filter((n) => Number.isFinite(n) && n <= 1.5);
+  const strongText = strongGrades.length >= 2 ? `mehrere 1er` : strongGrades.length === 1 ? `eine 1` : `gute Einzelergebnisse`;
+
+  const trendText = trend > 0.08
+    ? "aktuell eher fallend"
+    : trend < -0.08
+      ? "aktuell eher steigend"
+      : "aktuell eher stabil";
+
+  const outlierText = worstGrade
+    ? `Besonders die ${Number(worstGrade.grade).toFixed(1).replace(".", ",")} fällt durch ihre hohe Gewichtung von x${Math.round(worstGrade.weight)} stark ins Gewicht`
+    : "Einzelne Werte fallen stärker auf";
+
+  return `Deine Leistungen in ${subject} sind ${quality}, aber ${variability}. ${outlierText}, werden aber durch ${strongText} gut ausgeglichen. Der Trend wirkt ${trendText}, mit einzelnen Ausreißern.`;
 };

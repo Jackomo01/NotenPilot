@@ -13,7 +13,7 @@ export const useLS = (key, init) => {
   return [v, set];
 };
 
-export const useCountUp = (target, ms = 900) => {
+export const useCountUp = (target, ms = 1600) => {
   const [val, setVal] = useState(0);
   useEffect(() => {
     if (target == null) return;

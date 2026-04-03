@@ -152,8 +152,7 @@ const Dashboard = memo(({ loading, user }) => {
   const best  = sStats[0];
   const worst = sStats.length > 1 ? sStats[sStats.length-1] : null;
   const avgColor = avg ? gc(avg) : C.t2;
-  const aiCtx = useMemo(() => buildAIContext(grades, subjects), [grades, subjects]);
-  const insight = useMemo(() => dashboardInsight(aiCtx), [aiCtx]);
+  const insight = useMemo(() => dashboardInsight(buildAIContext(grades, subjects)), [grades]);
 
   if (loading) return (
     <div style={{ display:"grid", gap:16 }}>
@@ -170,8 +169,8 @@ const Dashboard = memo(({ loading, user }) => {
         <p style={{ fontSize:13, color:C.t1 }}>Dein aktueller Leistungsüberblick.</p>
       </div>
 
-      <Card pad="16px 20px" style={{ background:C.bg3, border:`1px solid ${C.line}` }}>
-        <div style={{ fontSize:11, fontWeight:700, color:C.t2, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:8 }}>AI INSIGHT</div>
+      <Card pad="16px 20px" style={{ background:`linear-gradient(180deg, ${C.bg4} 0%, ${C.bg3} 100%)`, border:`1px solid ${C.line}` }}>
+        <div style={{ fontSize:11, fontWeight:700, color:C.t2, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:8 }}>AI PILOT</div>
         <div style={{ fontSize:13, lineHeight:1.5, color:C.t0 }}>{insight}</div>
       </Card>
 
