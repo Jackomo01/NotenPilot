@@ -3,8 +3,8 @@ import { motion } from "framer-motion";
 import { useApp } from "../context/index.jsx";
 import { C, R } from "../utils/tokens.jsx";
 import { Card, SparkBtn } from "../components/ui.jsx";
-import { buildAIContext, getAIProvider, getAIStatus, getSuggestions, streamChatAnswer } from "../utils/ai.jsx";
-import { consumeUserQuestionQuota, loadUserCloudData } from "../utils/cloudData.js";
+import { buildAIContext, getAIProvider, getSuggestions, streamChatAnswer } from "../utils/ai.jsx";
+import { consumeUserQuestionQuota, DAILY_AI_PILOT_QUESTIONS, loadUserCloudData } from "../utils/cloudData.js";
 
 const normalizeQ = (q) => String(q || "").trim().toLowerCase();
 
@@ -59,7 +59,7 @@ const AIPage = memo(({
 
     if (user?.uid) {
       try {
-        const quota = await consumeUserQuestionQuota(user.uid, 3);
+        const quota = await consumeUserQuestionQuota(user.uid, DAILY_AI_PILOT_QUESTIONS);
         setQuestionsRemaining?.(quota.remaining);
         if (!quota.allowed) {
           const limitMsg = {
@@ -112,14 +112,10 @@ const AIPage = memo(({
     const runtimeCtx = buildAIContext(runtimeGrades, runtimeSubjects);
 
     const provider = getAIProvider();
-    const isBackend = provider === "backend" || provider === "proxy" || provider === "appwrite";
-    setEngineProgress(isBackend ? "Verbinde mit AI-Backend..." : (getAIStatus() === "ready" ? "" : "Lade lokales AI-Modell..."));
+    const isBackend = provider !== "none";
+    setEngineProgress(isBackend ? "Verbinde mit AI-Backend..." : "AI-Backend nicht konfiguriert.");
     const history = messages.filter((m) => m.role === "user" || m.role === "assistant");
-    for await (const partial of streamChatAnswer(prompt, runtimeCtx, history, (p) => {
-      if (isBackend) return;
-      const pct = p?.progress != null ? Math.round(p.progress * 100) : null;
-      if (pct != null) setEngineProgress(`Lade lokales AI-Modell... ${pct}%`);
-    }, (meta) => {
+    for await (const partial of streamChatAnswer(prompt, runtimeCtx, history, undefined, (meta) => {
       setMessages((prev) => prev.map((m) => (
         m.id === assistantId
           ? { ...m, aiProvider: meta?.provider || m.aiProvider, aiModel: meta?.model || m.aiModel }
@@ -139,8 +135,31 @@ const AIPage = memo(({
   };
 
   return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} style={{ display: "grid", gap: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
+      style={{
+        display: "grid",
+        gap: 16,
+        background: `linear-gradient(180deg, ${C.bg4} 0%, ${C.bg3} 100%)`,
+        border: `1px solid ${C.acc}55`,
+        borderRadius: R.xl,
+        padding: 14,
+        boxShadow: "0 24px 60px rgba(0,0,0,0.42), 0 0 0 1px rgba(91,110,240,0.16)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          border: `1px solid ${C.line}`,
+          borderRadius: R.l,
+          background: C.bg3,
+          padding: "10px 12px",
+        }}
+      >
         <div>
           <h2 style={{ fontSize: 20, fontWeight: 700, color: C.t0, letterSpacing: "-0.02em", marginBottom: 3 }}>AI PILOT</h2>
           {!!engineProgress && <p style={{ fontSize: 11, color: C.t2, marginTop: 4 }}>{engineProgress}</p>}
@@ -184,7 +203,7 @@ const AIPage = memo(({
         )}
       </div>
 
-      <Card pad="0" style={{ overflow: "hidden" }}>
+      <Card pad="0" style={{ overflow: "hidden", borderRadius: R.l, border: `1px solid ${C.lineH}` }}>
         <div ref={listRef} style={{ maxHeight: 420, overflowY: "auto", padding: "16px 16px 10px", display: "grid", gap: 10 }}>
           {messages.length === 0 && (
             <div style={{ fontSize: 13, color: C.t2, padding: "8px 4px" }}>

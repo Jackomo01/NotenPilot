@@ -40,8 +40,9 @@ const GEMINI_API_KEY = env("GEMINI_API_KEY").trim();
 const GEMINI_BASE_URL = env("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").replace(/\/$/, "");
 const GEMINI_MODEL = env("GEMINI_MODEL", "gemini-2.0-flash").trim();
 const GEMINI_FALLBACK_MODELS_STR = env("GEMINI_FALLBACK_MODELS", "gemini-2.0-flash,gemini-1.5-flash").trim();
+const GEMINI_STRICT_VALIDATION = env("GEMINI_STRICT_VALIDATION", "false").trim().toLowerCase() === "true";
 const GEMINI_429_COOLDOWN_MS = Number(env("GEMINI_429_COOLDOWN_MS", "300000"));
-const GEMINI_TIMEOUT_MS = Number(env("GEMINI_TIMEOUT_MS", "7000"));
+const GEMINI_TIMEOUT_MS = Math.max(12000, Number(env("GEMINI_TIMEOUT_MS", "7000")));
 const GEMINI_FALLBACK_MODELS = GEMINI_FALLBACK_MODELS_STR.split(",")
   .map((m) => m.trim())
   .filter(Boolean);
@@ -50,19 +51,38 @@ const OPENROUTER_BASE_URL = env("OPENROUTER_BASE_URL", "https://openrouter.ai/ap
 const HF_BASE_URL = env("HF_BASE_URL", "https://router.huggingface.co/v1").replace(/\/$/, "");
 const HF_TOKEN = env("HF_TOKEN", env("HF_API_KEY", "")).trim();
 const HF_MODEL = env("HF_MODEL", "Qwen/Qwen2.5-7B-Instruct").trim();
-const OPENROUTER_TIMEOUT_MS = Number(env("OPENROUTER_TIMEOUT_MS", "12000"));
-const HF_TIMEOUT_MS = Number(env("HF_TIMEOUT_MS", "4000"));
-const HF_WHEN_GEMINI_ENABLED = env("HF_WHEN_GEMINI_ENABLED", "false").trim().toLowerCase() === "true";
+const OPENROUTER_TIMEOUT_MS = Math.max(18000, Number(env("OPENROUTER_TIMEOUT_MS", "12000")));
+const HF_TIMEOUT_MS = Math.max(10000, Number(env("HF_TIMEOUT_MS", "4000")));
+const ROUTEWAY_API_KEY = env("ROUTEWAY_API_KEY").trim();
+const ROUTEWAY_BASE_URL = env("ROUTEWAY_BASE_URL", "https://api.routeway.ai/v1").replace(/\/$/, "");
+const ROUTEWAY_MODEL = env("ROUTEWAY_MODEL", "meta-llama/llama-3.1-70b-instruct").trim();
+const ROUTEWAY_TIMEOUT_MS = Math.max(12000, Number(env("ROUTEWAY_TIMEOUT_MS", "12000")));
+const HF_STRICT_VALIDATION = env("HF_STRICT_VALIDATION", "false").trim().toLowerCase() === "true";
+const OPENROUTER_REQUIRE_FREE_MODELS = env("OPENROUTER_REQUIRE_FREE_MODELS", "true").trim().toLowerCase() !== "false";
+const OPENROUTER_DISCOVER_MODELS = env("OPENROUTER_DISCOVER_MODELS", "true").trim().toLowerCase() !== "false";
+const OPENROUTER_MODELS_CACHE_MS = Math.max(30000, Number(env("OPENROUTER_MODELS_CACHE_MS", "600000")));
+const OPENROUTER_FREE_ROUTER_ID = "openrouter/free";
 const isFreeModel = (model) => {
   const value = String(model || "").trim().toLowerCase();
-  return value.endsWith(":free");
+  return value === OPENROUTER_FREE_ROUTER_ID || value.endsWith(":free");
+};
+const isAllowedOpenRouterModel = (model) => {
+  const value = String(model || "").trim().toLowerCase();
+  if (!value) return false;
+
+  // Legacy placeholder that triggers OpenRouter HTTP 400.
+  if (value === "openrouter/openrouter-free") return false;
+
+  if (!value.includes("/")) return false;
+  if (OPENROUTER_REQUIRE_FREE_MODELS && !isFreeModel(value)) return false;
+  return true;
 };
 const OPENROUTER_MODEL = env("OPENROUTER_MODEL", "qwen/qwen3.6-plus:free").trim();
-const OPENROUTER_FALLBACK_MODELS_STR = env("OPENROUTER_FALLBACK_MODELS", "mistralai/mistral-7b-instruct:free,mistralai/mistral-small-3.1-24b-instruct:free,meta-llama/llama-3-8b-instruct:free").trim();
+const OPENROUTER_FALLBACK_MODELS_STR = env("OPENROUTER_FALLBACK_MODELS", "qwen/qwen3.6-plus:free,nousresearch/hermes-3-llama-3.1-405b:free,qwen/qwen3-next-80b-a3b-instruct:free").trim();
 const OPENROUTER_FALLBACK_MODELS = OPENROUTER_FALLBACK_MODELS_STR.split(",")
   .map((m) => m.trim())
   .filter(Boolean)
-  .filter(isFreeModel);
+  .filter(isAllowedOpenRouterModel);
 const HF_FALLBACK_ENABLED = env("HF_FALLBACK_ENABLED", "true").trim().toLowerCase() !== "false";
 const AI_SAFE_FALLBACK_ENABLED = env("AI_SAFE_FALLBACK_ENABLED", "false").trim().toLowerCase() === "true";
 const AI_ONLY_MODE = env("AI_ONLY_MODE", "true").trim().toLowerCase() !== "false";
@@ -70,9 +90,15 @@ const AI_DETERMINISTIC_ENABLED = env("AI_DETERMINISTIC_ENABLED", "false").trim()
 const APP_TITLE = env("OPENROUTER_APP_TITLE", "NotenPilot").trim();
 const HTTP_REFERER = env("OPENROUTER_HTTP_REFERER", "http://localhost:5173").trim();
 let geminiBackoffUntilTs = 0;
+let hasLoggedUnknownResponseShape = false;
+const invalidOpenRouterModels = new Set();
+let openRouterModelsCache = {
+  fetchedAt: 0,
+  ids: null,
+};
 
-if (!isFreeModel(OPENROUTER_MODEL)) {
-  throw new Error(`Nur Free-Modelle sind erlaubt. Aktuell gesetzt: ${OPENROUTER_MODEL}`);
+if (!isAllowedOpenRouterModel(OPENROUTER_MODEL)) {
+  console.warn(`[AI ROUTING] Ignoring invalid OPENROUTER_MODEL: ${OPENROUTER_MODEL}`);
 }
 
 const writeJson = (res, status, body) => {
@@ -169,7 +195,12 @@ const buildStructuredContextPayload = (context) => {
   };
 };
 
-const buildSystemPrompt = (context) => {
+const isDashboardInsightTask = (prompt) => {
+  const p = String(prompt || "").toLowerCase();
+  return p.includes("[task:dashboard_insight]") || p.includes("task:dashboard_insight");
+};
+
+const buildSystemPrompt = (context, prompt = "") => {
   const fullContext = context && typeof context === "object" ? context : {};
   const grades = Array.isArray(fullContext.grades) ? fullContext.grades : [];
   const subjects = Array.isArray(fullContext.subjects) ? fullContext.subjects.filter(Boolean) : [];
@@ -188,6 +219,19 @@ const buildSystemPrompt = (context) => {
   });
 
   const structuredJson = JSON.stringify(buildStructuredContextPayload(fullContext), null, 2);
+  const dashboardTask = isDashboardInsightTask(prompt);
+  const dashboardOverride = dashboardTask
+    ? [
+      "",
+      "TASK OVERRIDE: dashboard_insight",
+      "- Gib 2-3 natürliche Sätze als kompakten Dashboard-Insight.",
+      "- Keine Nennung von Gesamtdurchschnitt, Durchschnitt, Notenanzahl oder Ranglisten-Labels.",
+      "- Keine Aufzählung einzelner Noten, keine Datumsdetails, keine Gewichtungen.",
+      "- Formuliere Trends, Stärken und Schwächen fachbezogen ohne Widersprüche.",
+      "- Nenne maximal 3 Fächer, damit die Aussage übersichtlich bleibt.",
+      "- Ausgabe nur als Fließtext ohne Überschriften.",
+    ]
+    : [];
 
   return [
     "You are an intelligent academic assistant integrated into the platform \"Notenpilot\".",
@@ -235,6 +279,7 @@ const buildSystemPrompt = (context) => {
     "- Antwort immer ausschließlich auf Deutsch.",
     "- Verwende Umlaute korrekt (ä, ö, ü) und keine ae/oe/ue-Ersatzschreibweise.",
     "- No greetings, no filler, no markdown, no emojis.",
+    ...dashboardOverride,
     "",
     "NEVER:",
     "- Invent data",
@@ -257,9 +302,9 @@ const buildSystemPrompt = (context) => {
   ].join("\n");
 };
 
-const buildRepairSystemPrompt = (context) =>
+const buildRepairSystemPrompt = (context, prompt = "") =>
   [
-    buildSystemPrompt(context),
+    buildSystemPrompt(context, prompt),
     "",
     "REPAIR ATTEMPT:",
     "- Previous answer was invalid. Re-answer strictly from provided JSON data.",
@@ -290,6 +335,89 @@ const withTimeout = (promise, ms) =>
       setTimeout(() => reject(new Error("Timeout")), Math.max(1, Number(ms) || 1))
     ),
   ]);
+
+const isTimeoutError = (err) => String(err?.message || err || "").toLowerCase().includes("timeout");
+
+const withTimeoutRetry = async (providerName, fn, timeoutMs) => {
+  try {
+    return await withTimeout(fn(), timeoutMs);
+  } catch (err) {
+    if (!isTimeoutError(err)) throw err;
+    const retryMs = Math.max(timeoutMs + 6000, Math.round(timeoutMs * 1.5));
+    console.warn(`[AI ROUTING] ${providerName} timed out at ${timeoutMs}ms, retrying once with ${retryMs}ms.`);
+    return withTimeout(fn(), retryMs);
+  }
+};
+
+const fetchOpenRouterModelIds = async () => {
+  if (!OPENROUTER_API_KEY) return null;
+
+  const now = Date.now();
+  if (openRouterModelsCache.ids && now - openRouterModelsCache.fetchedAt < OPENROUTER_MODELS_CACHE_MS) {
+    return openRouterModelsCache.ids;
+  }
+
+  const res = await withTimeout(
+    fetch(`${OPENROUTER_BASE_URL}/models`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      },
+    }),
+    Math.min(OPENROUTER_TIMEOUT_MS, 10000)
+  );
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`OpenRouter models HTTP ${res.status}: ${errText.slice(0, 300)}`);
+  }
+
+  const data = await res.json();
+  const ids = new Set(
+    (Array.isArray(data?.data) ? data.data : [])
+      .map((m) => String(m?.id || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+  openRouterModelsCache = {
+    fetchedAt: now,
+    ids,
+  };
+  return ids;
+};
+
+const resolveOpenRouterModelCandidates = async (configuredCandidates) => {
+  const cleaned = configuredCandidates
+    .map((m) => String(m || "").trim())
+    .filter(Boolean)
+    .filter((m, i, arr) => arr.indexOf(m) === i)
+    .filter(isAllowedOpenRouterModel)
+    .filter((m) => !invalidOpenRouterModels.has(m.toLowerCase()));
+
+  if (!OPENROUTER_DISCOVER_MODELS) return cleaned;
+
+  try {
+    const known = await fetchOpenRouterModelIds();
+    if (!known || !known.size) return cleaned;
+
+    const matchedConfigured = cleaned.filter((m) => known.has(m.toLowerCase()));
+    if (matchedConfigured.length) return matchedConfigured;
+
+    const discoveredFree = [...known]
+      .filter((m) => isAllowedOpenRouterModel(m))
+      .filter((m) => !invalidOpenRouterModels.has(m));
+
+    if (discoveredFree.length) {
+      const fallback = discoveredFree[0];
+      console.warn(`[AI ROUTING] No configured OpenRouter model is currently valid. Falling back to discovered model: ${fallback}`);
+      return [fallback];
+    }
+
+    return cleaned;
+  } catch (err) {
+    console.warn(`[AI ROUTING] OpenRouter model discovery failed, using configured candidates (${String(err?.message || err)})`);
+    return cleaned;
+  }
+};
 
 const normalizeIncomingGrades = (grades) => {
   if (!Array.isArray(grades)) return [];
@@ -389,6 +517,11 @@ const ensureFirestoreSnapshot = (context) => {
 
 const contentToText = (content) => {
   if (typeof content === "string") return content.trim();
+  if (content && typeof content === "object") {
+    if (typeof content.text === "string") return content.text.trim();
+    if (typeof content.content === "string") return content.content.trim();
+    if (typeof content.output_text === "string") return content.output_text.trim();
+  }
   if (Array.isArray(content)) {
     const text = content
       .map((part) => {
@@ -1431,21 +1564,39 @@ const extractAnswerText = (data) => {
   const fromText = contentToText(choice?.text);
   if (fromText) return fromText;
 
+  const fromCandidate = contentToText(data?.candidates?.[0]?.content?.parts);
+  if (fromCandidate) return fromCandidate;
+
+  const fromOutput = contentToText(data?.output?.[0]?.content);
+  if (fromOutput) return fromOutput;
+
+  const fromResponseOutputText = contentToText(data?.response?.output_text);
+  if (fromResponseOutputText) return fromResponseOutputText;
+
   const fromOutputText = contentToText(data?.output_text);
   if (fromOutputText) return fromOutputText;
 
   const finishReason = (choice?.finish_reason || "").toString();
   if (finishReason === "content_filter") {
-    return "Das Modell konnte auf diese Anfrage keine direkte Antwort liefern. Formuliere bitte kurz um.";
+    throw new Error("Antwort wurde durch Content-Filter blockiert.");
   }
 
-  return "Das Modell hat gerade keine Textantwort geliefert. Bitte versuche es erneut.";
+  if (!hasLoggedUnknownResponseShape) {
+    hasLoggedUnknownResponseShape = true;
+    try {
+      console.warn(`[AI PARSER] Unknown response shape: ${JSON.stringify(data).slice(0, 2000)}`);
+    } catch {
+      console.warn("[AI PARSER] Unknown response shape (non-serializable payload).");
+    }
+  }
+
+  throw new Error("Leere oder unbekannte Antwortstruktur vom Provider erhalten.");
 };
 
 const buildMessages = ({ prompt, context, history }) => {
   const safeContext = ensureFirestoreSnapshot(context);
   return [
-    { role: "system", content: buildSystemPrompt(safeContext || {}) },
+    { role: "system", content: buildSystemPrompt(safeContext || {}, prompt) },
     ...toHistoryMessages(history || []),
     { role: "user", content: prompt },
   ];
@@ -1454,7 +1605,7 @@ const buildMessages = ({ prompt, context, history }) => {
 const buildRepairMessages = ({ prompt, context, history }) => {
   const safeContext = ensureFirestoreSnapshot(context);
   return [
-    { role: "system", content: buildRepairSystemPrompt(safeContext || {}) },
+    { role: "system", content: buildRepairSystemPrompt(safeContext || {}, prompt) },
     ...toHistoryMessages(history || []),
     { role: "user", content: prompt },
   ];
@@ -1462,7 +1613,9 @@ const buildRepairMessages = ({ prompt, context, history }) => {
 
 const buildGeminiBody = ({ prompt, context, history, mode, repair = false }) => {
   const safeContext = ensureFirestoreSnapshot(context);
-  const baseSystem = repair ? buildRepairSystemPrompt(safeContext || {}) : buildSystemPrompt(safeContext || {});
+  const baseSystem = repair
+    ? buildRepairSystemPrompt(safeContext || {}, prompt)
+    : buildSystemPrompt(safeContext || {}, prompt);
   const past = toHistoryMessages(history || []).map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: String(m.content || "") }],
@@ -1541,17 +1694,19 @@ const callGeminiOnce = async ({ prompt, context, history, mode, model = GEMINI_M
   if (!String(answer || "").trim()) {
     throw new Error("Gemini lieferte keine verwertbare Textantwort.");
   }
-  if (looksEnglish(answer)) {
-    throw new Error("Gemini lieferte keine deutsche Antwort.");
-  }
-  if (isFalseNoDataClaim(answer, context)) {
-    throw new Error("Gemini behauptet fehlende Daten trotz vorhandenem Kontext.");
-  }
-  if (isUngroundedAnswer({ prompt, answer, context })) {
-    throw new Error("Gemini lieferte eine nicht datentreue Antwort.");
-  }
-  if (isBrokenAnswer(answer)) {
-    throw new Error("Gemini lieferte eine unvollständige Antwort.");
+  if (GEMINI_STRICT_VALIDATION) {
+    if (looksEnglish(answer)) {
+      throw new Error("Gemini lieferte keine deutsche Antwort.");
+    }
+    if (isFalseNoDataClaim(answer, context)) {
+      throw new Error("Gemini behauptet fehlende Daten trotz vorhandenem Kontext.");
+    }
+    if (isUngroundedAnswer({ prompt, answer, context })) {
+      throw new Error("Gemini lieferte eine nicht datentreue Antwort.");
+    }
+    if (isBrokenAnswer(answer)) {
+      throw new Error("Gemini lieferte eine unvollständige Antwort.");
+    }
   }
 
   return { answer, raw: data, model, provider: "gemini-api" };
@@ -1562,9 +1717,22 @@ const callOpenRouterOnce = async ({ prompt, context, history, mode, model }) => 
     throw new Error("OPENROUTER_API_KEY fehlt. Bitte als Umgebungsvariable setzen.");
   }
 
-  if (!isFreeModel(model)) {
-    throw new Error(`Nicht erlaubt: ${model}. Erlaubt sind nur Free-Modelle.`);
+  if (!isAllowedOpenRouterModel(model)) {
+    throw new Error(`Nicht erlaubt: ${model}. Erlaubt sind nur definierte OpenRouter-Modelle.`);
   }
+
+  const requestedModel = String(model || "").trim().toLowerCase();
+  const isFreeRouterRequest = requestedModel === OPENROUTER_FREE_ROUTER_ID;
+  const retryableFreeModel = "nvidia/nemotron-nano-12b-v2-vl:free";
+
+  const responseModel = (data) => String(
+    data?.model ||
+    data?.choices?.[0]?.model ||
+    data?.choices?.[0]?.message?.model ||
+    ""
+  ).trim().toLowerCase();
+
+  const isNemotronModel = (value) => String(value || "").toLowerCase().includes("nemotron");
 
   const requestOpenRouter = async (messages) => {
     const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
@@ -1598,8 +1766,29 @@ const callOpenRouterOnce = async ({ prompt, context, history, mode, model }) => 
     return { data, answer };
   };
 
+  const maybeRetryFreeRouter = async (data, answer) => {
+    if (!isFreeRouterRequest) return { data, answer, retried: false };
+
+    const modelFromResponse = responseModel(data);
+    const shouldRetry =
+      modelFromResponse === retryableFreeModel ||
+      isNemotronModel(modelFromResponse) ||
+      !String(answer || "").trim() ||
+      isBrokenAnswer(answer);
+
+    if (!shouldRetry) return { data, answer, retried: false };
+
+    console.log(`[AI ROUTING] OpenRouter free router returned no usable answer; retrying once.`);
+    const retried = await requestOpenRouter(buildMessages({ prompt, context, history }));
+    return { ...retried, retried: true };
+  };
+
   const first = await requestOpenRouter(buildMessages({ prompt, context, history }));
   let { data, answer } = first;
+
+  const retryResult = await maybeRetryFreeRouter(data, answer);
+  data = retryResult.data;
+  answer = retryResult.answer;
 
   if (isUngroundedAnswer({ prompt, answer, context })) {
     const repaired = await requestOpenRouter(buildRepairMessages({ prompt, context, history }));
@@ -1629,6 +1818,60 @@ const callOpenRouterOnce = async ({ prompt, context, history, mode, model }) => 
     throw new Error("OpenRouter lieferte eine unvollständige Antwort.");
   }
   return { answer, raw: data, model };
+};
+
+const callRoutewayOnce = async ({ prompt, context, history, mode }) => {
+  if (!ROUTEWAY_API_KEY) {
+    throw new Error("ROUTEWAY_API_KEY fehlt. Routeway kann nicht genutzt werden.");
+  }
+
+  const requestRouteway = async (messages) => {
+    const res = await fetch(`${ROUTEWAY_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${ROUTEWAY_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: ROUTEWAY_MODEL,
+        messages,
+        temperature: mode === "quick" ? 0.2 : 0.25,
+        max_tokens: mode === "quick" ? 100 : 160,
+        stream: false,
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`Routeway HTTP ${res.status}: ${errText.slice(0, 300)}`);
+    }
+
+    const data = await res.json();
+    const answer = normalizeAnswer({
+      prompt,
+      answer: extractAnswerText(data),
+      context,
+    });
+    return { data, answer };
+  };
+
+  const first = await requestRouteway(buildMessages({ prompt, context, history }));
+  let { data, answer } = first;
+
+  if (isUngroundedAnswer({ prompt, answer, context }) || isBrokenAnswer(answer)) {
+    const repaired = await requestRouteway(buildRepairMessages({ prompt, context, history }));
+    data = repaired.data;
+    answer = repaired.answer;
+  }
+
+  if (!String(answer || "").trim()) {
+    throw new Error("Routeway lieferte keine verwertbare Textantwort.");
+  }
+  if (looksEnglish(answer)) {
+    throw new Error("Routeway lieferte keine deutsche Antwort.");
+  }
+
+  return { answer, raw: data, model: ROUTEWAY_MODEL, provider: "routeway" };
 };
 
 const callHuggingFaceOnce = async ({ prompt, context, history, mode }) => {
@@ -1669,13 +1912,9 @@ const callHuggingFaceOnce = async ({ prompt, context, history, mode }) => {
   const first = await requestHuggingFace(buildMessages({ prompt, context, history }));
   let { data, answer } = first;
 
-  if (isUngroundedAnswer({ prompt, answer, context })) {
-    const repaired = await requestHuggingFace(buildRepairMessages({ prompt, context, history }));
-    data = repaired.data;
-    answer = repaired.answer;
-  }
-
-  if (isBrokenAnswer(answer)) {
+  // HF intentionally uses softer validation than Gemini/OpenRouter to improve availability.
+  // We only trigger a repair pass for obviously weak outputs.
+  if (!String(answer || "").trim() || isBrokenAnswer(answer)) {
     const repaired = await requestHuggingFace(buildRepairMessages({ prompt, context, history }));
     data = repaired.data;
     answer = repaired.answer;
@@ -1687,20 +1926,30 @@ const callHuggingFaceOnce = async ({ prompt, context, history, mode }) => {
   if (looksEnglish(answer)) {
     throw new Error("HuggingFace lieferte keine deutsche Antwort.");
   }
-  if (isFalseNoDataClaim(answer, context)) {
-    throw new Error("HuggingFace behauptet fehlende Daten trotz vorhandenem Kontext.");
+
+  const hfFalseNoData = isFalseNoDataClaim(answer, context);
+  const hfUngrounded = isUngroundedAnswer({ prompt, answer, context });
+  const hfBroken = isBrokenAnswer(answer);
+
+  if (HF_STRICT_VALIDATION) {
+    if (hfFalseNoData) throw new Error("HuggingFace behauptet fehlende Daten trotz vorhandenem Kontext.");
+    if (hfUngrounded) throw new Error("HuggingFace lieferte eine nicht datentreue Antwort.");
+    if (hfBroken) throw new Error("HuggingFace lieferte eine unvollständige Antwort.");
+  } else {
+    // Soft checks for HF: warn but keep answer to avoid unnecessary total backend failure.
+    if (hfFalseNoData) {
+      console.warn("[AI QUALITY][HF] false-no-data marker detected, response accepted (soft mode).");
+    }
+    if (hfUngrounded) {
+      console.warn("[AI QUALITY][HF] ungrounded marker detected, response accepted (soft mode).");
+    }
+    if (hfBroken) {
+      console.warn("[AI QUALITY][HF] broken marker detected, response accepted (soft mode).");
+    }
   }
-  if (isUngroundedAnswer({ prompt, answer, context })) {
-    throw new Error("HuggingFace lieferte eine nicht datentreue Antwort.");
-  }
-  if (isBrokenAnswer(answer)) {
-    throw new Error("HuggingFace lieferte eine unvollständige Antwort.");
-  }
+
   return { answer, raw: data, model: HF_MODEL, provider: "huggingface-router" };
 };
-
-const isNoTextAnswer = (answer) =>
-  String(answer || "").toLowerCase().includes("keine textantwort geliefert");
 
 const isLikelyTruncated = (raw, answer) => {
   const choice = raw?.choices?.[0] || {};
@@ -1875,106 +2124,159 @@ const callOpenRouter = async ({ prompt, context, history, mode }) => {
   const nowTs = Date.now();
   const geminiInBackoff = geminiBackoffUntilTs > nowTs;
 
-  const providerRunners = [];
+  const errors = [];
 
-  if (GEMINI_API_KEY && !geminiInBackoff) {
-    providerRunners.push(
-      withTimeout(
-        callGeminiOnce({
-          prompt,
-          context: safeContext,
-          history,
-          mode,
-          model: GEMINI_MODEL,
-        }),
-        GEMINI_TIMEOUT_MS
-      ).catch((err) => {
-        const msg = String(err?.message || err || "unknown");
-        if (msg.includes("Gemini HTTP 429")) {
-          geminiBackoffUntilTs = Date.now() + Math.max(0, GEMINI_429_COOLDOWN_MS || 0);
-        }
-        console.warn(`[AI ROUTING] Gemini failed -> next (${msg})`);
-        throw new Error(`gemini: ${msg}`);
-      })
-    );
-  } else if (GEMINI_API_KEY && geminiInBackoff) {
-    const waitSec = Math.max(1, Math.ceil((geminiBackoffUntilTs - nowTs) / 1000));
-    console.warn(`[AI ROUTING] Gemini skipped (429 cooldown ${waitSec}s).`);
+  // 1) Primary provider: HuggingFace
+  const canUseHf = HF_FALLBACK_ENABLED && !!HF_TOKEN;
+  if (canUseHf && shouldFallbackToHuggingFace()) {
+    console.log(`[AI ROUTING] Trying HuggingFace (${HF_MODEL})...`);
+    try {
+      const hf = await withTimeoutRetry(
+        "HuggingFace",
+        () => callHuggingFaceOnce({ prompt, context: safeContext, history, mode }),
+        HF_TIMEOUT_MS
+      );
+      if (String(hf?.answer || "").trim()) {
+        console.log(`[AI ROUTING] HuggingFace succeeded.`);
+        return hf;
+      }
+      errors.push("huggingface: empty answer");
+    } catch (err) {
+      const msg = String(err?.message || err || "unknown");
+      console.warn(`[AI ROUTING] HuggingFace failed -> fallback Routeway (${msg})`);
+      errors.push(`huggingface: ${msg}`);
+    }
   }
 
-  providerRunners.push(
-    withTimeout(
-      (async () => {
-        const primary = await callOpenRouterOnce({
-          prompt,
-          context: safeContext,
-          history,
-          mode,
-          model: OPENROUTER_MODEL,
-        });
-        if (!isNoTextAnswer(primary.answer)) return { ...primary, provider: "openrouter-proxy" };
+  // 2) Fallback provider: Routeway
+  if (ROUTEWAY_API_KEY) {
+    console.log(`[AI ROUTING] Trying Routeway (${ROUTEWAY_MODEL})...`);
+    try {
+      const routeway = await withTimeoutRetry(
+        "Routeway",
+        () => callRoutewayOnce({ prompt, context: safeContext, history, mode }),
+        ROUTEWAY_TIMEOUT_MS
+      );
+      if (String(routeway?.answer || "").trim()) {
+        console.log(`[AI ROUTING] Routeway succeeded.`);
+        return routeway;
+      }
+      errors.push("routeway: empty answer");
+    } catch (err) {
+      const msg = String(err?.message || err || "unknown");
+      console.warn(`[AI ROUTING] Routeway failed -> fallback OpenRouter (${msg})`);
+      errors.push(`routeway: ${msg}`);
+    }
+  }
+
+  // 3) Next provider: OpenRouter
+  try {
+    const openrouter = await withTimeoutRetry(
+      "OpenRouter",
+      async () => {
+        const modelCandidates = [OPENROUTER_MODEL, ...OPENROUTER_FALLBACK_MODELS]
+          .map((m) => String(m || "").trim());
+
+        const resolvedCandidates = await resolveOpenRouterModelCandidates(modelCandidates);
+
+        if (!resolvedCandidates.length) {
+          throw new Error("No valid OpenRouter model IDs configured.");
+        }
 
         let lastError = new Error("OpenRouter lieferte keine verwertbare Textantwort.");
-        for (const fallbackModel of OPENROUTER_FALLBACK_MODELS) {
-          if (fallbackModel === OPENROUTER_MODEL) continue;
+        for (const modelCandidate of resolvedCandidates) {
+          console.log(`[AI ROUTING] Trying OpenRouter (${modelCandidate})...`);
           try {
-            const alt = await callOpenRouterOnce({
+            const candidateResult = await callOpenRouterOnce({
               prompt,
               context: safeContext,
               history,
               mode,
-              model: fallbackModel,
+              model: modelCandidate,
             });
-            if (!isNoTextAnswer(alt.answer)) return { ...alt, provider: "openrouter-proxy" };
+            if (String(candidateResult?.answer || "").trim()) {
+              return { ...candidateResult, provider: "openrouter-proxy" };
+            }
+            lastError = new Error(`OpenRouter Modell ${modelCandidate} lieferte keine verwertbare Textantwort.`);
           } catch (err) {
+            const msg = String(err?.message || err || "").toLowerCase();
+            if (msg.includes("not a valid model id")) {
+              invalidOpenRouterModels.add(String(modelCandidate || "").toLowerCase());
+              console.warn(`[AI ROUTING] OpenRouter invalid model cached: ${modelCandidate}`);
+            }
             lastError = err;
           }
         }
         throw lastError;
-      })(),
+      },
       OPENROUTER_TIMEOUT_MS
-    ).catch((err) => {
-      const msg = String(err?.message || err || "unknown");
-      console.warn(`[AI ROUTING] OpenRouter failed -> next (${msg})`);
-      throw new Error(`openrouter: ${msg}`);
-    })
-  );
-
-  const canUseHf = HF_FALLBACK_ENABLED && !!HF_TOKEN && (HF_WHEN_GEMINI_ENABLED || !GEMINI_API_KEY);
-  if (canUseHf && shouldFallbackToHuggingFace()) {
-    providerRunners.push(
-      withTimeout(
-        callHuggingFaceOnce({ prompt, context: safeContext, history, mode }),
-        HF_TIMEOUT_MS
-      ).catch((err) => {
-        const msg = String(err?.message || err || "unknown");
-        console.warn(`[AI ROUTING] HuggingFace failed -> next (${msg})`);
-        throw new Error(`huggingface: ${msg}`);
-      })
     );
+    if (String(openrouter?.answer || "").trim()) {
+      console.log(`[AI ROUTING] OpenRouter succeeded.`);
+      return openrouter;
+    }
+    errors.push("openrouter: empty answer");
+  } catch (err) {
+    const msg = String(err?.message || err || "unknown");
+    console.warn(`[AI ROUTING] OpenRouter failed -> fallback Gemini (${msg})`);
+    errors.push(`openrouter: ${msg}`);
   }
 
-  if (!providerRunners.length) {
+  // 4) Last provider: Gemini (if configured and not in cooldown)
+  if (GEMINI_API_KEY && !geminiInBackoff) {
+    const geminiCandidates = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS]
+      .map((m) => String(m || "").trim())
+      .filter(Boolean)
+      .filter((m, i, arr) => arr.indexOf(m) === i);
+    try {
+      let lastGeminiError = new Error("Gemini lieferte keine verwertbare Textantwort.");
+      for (const geminiCandidate of geminiCandidates) {
+        console.log(`[AI ROUTING] Trying Gemini (${geminiCandidate})...`);
+        try {
+          const gemini = await withTimeoutRetry(
+            "Gemini",
+            () => callGeminiOnce({
+              prompt,
+              context: safeContext,
+              history,
+              mode,
+              model: geminiCandidate,
+            }),
+            GEMINI_TIMEOUT_MS
+          );
+          if (String(gemini?.answer || "").trim()) {
+            console.log(`[AI ROUTING] Gemini succeeded.`);
+            return gemini;
+          }
+          lastGeminiError = new Error(`Gemini Modell ${geminiCandidate} lieferte keine verwertbare Textantwort.`);
+        } catch (err) {
+          const msg = String(err?.message || err || "unknown");
+          if (msg.includes("Gemini HTTP 429")) {
+            geminiBackoffUntilTs = Date.now() + Math.max(0, GEMINI_429_COOLDOWN_MS || 0);
+          }
+          lastGeminiError = err;
+        }
+      }
+      throw lastGeminiError;
+    } catch (err) {
+      const msg = String(err?.message || err || "unknown");
+      if (msg.includes("Gemini HTTP 429")) {
+        geminiBackoffUntilTs = Date.now() + Math.max(0, GEMINI_429_COOLDOWN_MS || 0);
+      }
+      console.warn(`[AI ROUTING] Gemini failed -> no provider left (${msg})`);
+      errors.push(`gemini: ${msg}`);
+    }
+  } else if (GEMINI_API_KEY && geminiInBackoff) {
+    const waitSec = Math.max(1, Math.ceil((geminiBackoffUntilTs - nowTs) / 1000));
+    console.warn(`[AI ROUTING] Gemini skipped (429 cooldown ${waitSec}s).`);
+    errors.push(`gemini: cooldown ${waitSec}s`);
+  }
+
+  if (!GEMINI_API_KEY && !OPENROUTER_API_KEY && !HF_TOKEN && !ROUTEWAY_API_KEY) {
     return buildNoSafeFallbackResult("no provider configured");
   }
 
-  try {
-    const fastest = await Promise.any(
-      providerRunners.map((p) =>
-        p.then((res) => {
-          const answer = String(res?.answer || "").trim();
-          if (!answer) throw new Error("empty answer");
-          return res;
-        })
-      )
-    );
-    return fastest;
-  } catch (aggregateErr) {
-    const reasons = Array.isArray(aggregateErr?.errors)
-      ? aggregateErr.errors.map((e) => String(e?.message || e)).join(" | ")
-      : String(aggregateErr?.message || aggregateErr || "unknown");
-    return buildNoSafeFallbackResult(reasons);
-  }
+  return buildNoSafeFallbackResult(errors.join(" | ") || "all providers failed");
 };
 
 const server = http.createServer(async (req, res) => {
@@ -2043,9 +2345,10 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   const geminiMode = GEMINI_API_KEY ? `enabled (${GEMINI_MODEL})` : "disabled";
+  const routewayMode = ROUTEWAY_API_KEY ? `enabled (${ROUTEWAY_MODEL})` : "disabled";
   const hfMode = HF_FALLBACK_ENABLED && HF_TOKEN ? `enabled (${HF_MODEL})` : "disabled";
   const safeMode = AI_SAFE_FALLBACK_ENABLED ? "enabled" : "disabled";
-  console.log(`AI proxy listening on http://localhost:${PORT}/ai (Gemini: ${geminiMode}, OpenRouter free-only, HF fallback: ${hfMode}, Safe fallback: ${safeMode})`);
+  console.log(`AI proxy listening on http://localhost:${PORT}/ai (Routeway: ${routewayMode}, HF: ${hfMode}, OpenRouter free-only=${OPENROUTER_REQUIRE_FREE_MODELS}, Gemini: ${geminiMode}, Safe fallback: ${safeMode})`);
 });
 
 

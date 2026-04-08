@@ -1,4 +1,4 @@
-import React, { memo, useMemo } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { AreaChart, Area, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend } from "recharts";
 import { useApp } from "../context/index.jsx";
@@ -6,7 +6,15 @@ import { useCountUp } from "../hooks/index.jsx";
 import { wAvg, fDE, gc, gl } from "../utils/helpers.jsx";
 import { C, R } from "../utils/tokens.jsx";
 import { Sk, Card, Lbl, ChartTip } from "../components/ui.jsx";
-import { buildAIContext, dashboardInsight } from "../utils/ai.jsx";
+import {
+  buildAIContext,
+  buildDashboardInsightPrompt,
+  dashboardInsight,
+  isDashboardInsightBackendError,
+  normalizeDashboardInsight,
+  requestDashboardInsightDetailed,
+} from "../utils/ai.jsx";
+import { loadDashboardInsight, saveDashboardInsight } from "../utils/cloudData.js";
 
 const AnimNum = ({ to, dec=0 }) => { const v = useCountUp(to??0); return <span>{v.toFixed(dec)}</span>; };
 
@@ -127,6 +135,7 @@ const NoteChart = ({ data, avgColor, height = 210 }) => {
 
 const Dashboard = memo(({ loading, user }) => {
   const { grades, subjects } = useApp();
+  const aiCtx = useMemo(() => buildAIContext(grades, subjects), [grades, subjects]);
   const avg = wAvg(grades);
   const animAvg = useCountUp(avg);
 
@@ -152,7 +161,94 @@ const Dashboard = memo(({ loading, user }) => {
   const best  = sStats[0];
   const worst = sStats.length > 1 ? sStats[sStats.length-1] : null;
   const avgColor = avg ? gc(avg) : C.t2;
-  const insight = useMemo(() => dashboardInsight(buildAIContext(grades, subjects)), [grades]);
+  const [insight, setInsight] = useState(() => (grades.length ? "AI Insight wird geladen..." : dashboardInsight(aiCtx)));
+  const lastInsightRefreshCountRef = useRef(-1);
+  const refreshCountKey = user?.uid ? `np6_dashboard_insight_refresh_count_${user.uid}` : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!user?.uid) return () => { cancelled = true; };
+
+    const loadPersisted = async () => {
+      try {
+        const persisted = await loadDashboardInsight(user.uid);
+        if (cancelled || !persisted?.text) return;
+        setInsight(persisted.text);
+      } catch (err) {
+        console.error("Load dashboard insight from cloud failed:", err);
+      }
+
+      try {
+        const localCount = Number(window.localStorage.getItem(`np6_dashboard_insight_refresh_count_${user.uid}`));
+        if (Number.isFinite(localCount) && localCount >= 0) {
+          lastInsightRefreshCountRef.current = localCount;
+        }
+      } catch {
+        // Keep in-memory default if localStorage is unavailable.
+      }
+    };
+
+    loadPersisted();
+    return () => { cancelled = true; };
+  }, [user?.uid]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!grades.length) {
+      setInsight(dashboardInsight(aiCtx));
+      return () => { cancelled = true; };
+    }
+
+    const currentCount = grades.length;
+    const lastCount = lastInsightRefreshCountRef.current;
+    const isFirstGeneration = lastCount < 0;
+    const addedNotesSinceLastRefresh = isFirstGeneration ? currentCount : Math.max(0, currentCount - lastCount);
+    const shouldRefreshNow = isFirstGeneration || addedNotesSinceLastRefresh >= 2;
+
+    if (!shouldRefreshNow) {
+      return () => { cancelled = true; };
+    }
+
+    const run = async () => {
+      try {
+        const result = await requestDashboardInsightDetailed(aiCtx);
+        const rawAnswer = String(result?.answer || "");
+        const answer = normalizeDashboardInsight(rawAnswer);
+        if (cancelled) return;
+
+        const backendInvalid = !answer || isDashboardInsightBackendError(rawAnswer);
+        const nextInsight = backendInvalid
+          ? dashboardInsight(aiCtx)
+          : answer;
+
+        setInsight(nextInsight);
+        lastInsightRefreshCountRef.current = currentCount;
+        if (refreshCountKey) {
+          window.localStorage.setItem(refreshCountKey, String(currentCount));
+        }
+
+        if (user?.uid) {
+          await saveDashboardInsight(user.uid, { text: nextInsight });
+        }
+      } catch {
+        if (!cancelled) {
+          setInsight(dashboardInsight(aiCtx));
+          lastInsightRefreshCountRef.current = currentCount;
+          if (refreshCountKey) {
+            window.localStorage.setItem(refreshCountKey, String(currentCount));
+          }
+          if (user?.uid) {
+            saveDashboardInsight(user.uid, { text: dashboardInsight(aiCtx) }).catch((err) => {
+              console.error("Save fallback insight to cloud failed:", err);
+            });
+          }
+        }
+      }
+    };
+
+    run();
+    return () => { cancelled = true; };
+  }, [aiCtx, grades.length, refreshCountKey, user?.uid]);
 
   if (loading) return (
     <div style={{ display:"grid", gap:16 }}>

@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 import { wAvg } from "./helpers.jsx";
 
 const MODEL_ID = "Qwen2.5-1.5B-Instruct-q4f32_1-MLC";
@@ -7,9 +8,10 @@ let engineStatus = "idle"; // idle | loading | ready | fallback
 const AI_ENDPOINT = (import.meta.env.VITE_AI_ENDPOINT || import.meta.env.VITE_APPWRITE_AI_ENDPOINT || "").trim();
 const AI_API_KEY = (import.meta.env.VITE_AI_API_KEY || import.meta.env.VITE_APPWRITE_AI_API_KEY || "").trim();
 const AI_PROVIDER_ENV = (import.meta.env.VITE_AI_PROVIDER || "").trim().toLowerCase();
-const AI_PROVIDER = AI_PROVIDER_ENV || (AI_ENDPOINT ? "backend" : "local");
+const AI_PROVIDER = AI_PROVIDER_ENV || (AI_ENDPOINT ? "backend" : "none");
 const AI_ENABLE_LOCAL_ENGINE = (import.meta.env.VITE_AI_ENABLE_LOCAL_ENGINE || "false").trim().toLowerCase() === "true";
 const AI_ALLOW_RULE_FALLBACK = (import.meta.env.VITE_AI_ALLOW_RULE_FALLBACK || "false").trim().toLowerCase() === "true";
+const BACKEND_TIMEOUT_MS = Math.max(15000, Number(import.meta.env.VITE_AI_TIMEOUT_MS || "60000"));
 
 const toNum = (v) => {
   const n = parseFloat(String(v).replace(",", "."));
@@ -550,7 +552,7 @@ const buildBackendPayload = (prompt, ctx, history = [], mode = "chat") => ({
 });
 
 const requestBackendAI = async (payload) => {
-  if (!useBackendAI()) return null;
+  if (!AI_ENDPOINT) return null;
 
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const headers = {
@@ -560,12 +562,17 @@ const requestBackendAI = async (payload) => {
 
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
+    let timeoutId = null;
     try {
+      const controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), BACKEND_TIMEOUT_MS);
       const res = await fetch(AI_ENDPOINT, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
+      if (timeoutId !== null) clearTimeout(timeoutId);
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
@@ -592,6 +599,7 @@ const requestBackendAI = async (payload) => {
         model: "unknown",
       };
     } catch (err) {
+      if (timeoutId !== null) clearTimeout(timeoutId);
       lastError = err;
       const msg = String(err?.message || "").toLowerCase();
       const retriable = msg.includes("networkerror") || msg.includes("failed to fetch") || msg.includes("timeout") || msg.includes("backend ai lieferte leere");
@@ -602,57 +610,20 @@ const requestBackendAI = async (payload) => {
   throw lastError || new Error("Backend AI request failed.");
 };
 
-const ensureEngine = async (onProgress) => {
-  if (!canUseWebGPU()) {
-    engineStatus = "fallback";
-    return null;
-  }
-
-  if (!enginePromise) {
-    engineStatus = "loading";
-    enginePromise = (async () => {
-      const webllm = await import("@mlc-ai/web-llm");
-      const createEngine = webllm.CreateMLCEngine || webllm.CreateWebWorkerMLCEngine;
-      if (!createEngine) throw new Error("WebLLM Engine API nicht gefunden");
-
-      const engine = await createEngine(MODEL_ID, {
-        initProgressCallback: (p) => onProgress?.(p),
-      });
-      engineStatus = "ready";
-      return engine;
-    })().catch((err) => {
-      engineStatus = "fallback";
-      console.error("WebLLM init failed, fallback enabled:", err);
-      return null;
-    });
-  }
-
-  const engine = await enginePromise;
-  return engine;
-};
-
-export const getAIStatus = () => engineStatus;
-export const getAIProvider = () => AI_PROVIDER;
+export const getAIStatus = () => (AI_ENDPOINT ? "ready" : "idle");
+export const getAIProvider = () => (AI_ENDPOINT ? (AI_PROVIDER || "backend") : "none");
 
 export const quickAskDetailed = async (prompt, ctx, onProgress, history = []) => {
   try {
-    if (useBackendAI()) {
-      const backend = await requestBackendAI(buildBackendPayload(prompt, ctx, history, "quick"));
-      if (backend?.answer) return backend;
-      return {
-        answer: "Backend AI hat leer geantwortet. Bitte erneut versuchen.",
-        provider: "backend",
-        model: "unknown",
-      };
-    }
-
+    const backend = await requestBackendAI(buildBackendPayload(prompt, ctx, history, "quick"));
+    if (backend?.answer) return backend;
     return {
-      answer: "AI-Backend erforderlich. Bitte Proxy/Endpoint prüfen.",
+      answer: "AI-Backend nicht konfiguriert. Bitte Proxy/Endpoint prüfen.",
       provider: "none",
       model: "none",
     };
   } catch (err) {
-    console.error("quickAsk AI failed, fallback used:", err);
+    console.error("quickAsk AI failed:", err);
     return {
       answer: backendUnavailableText(err),
       provider: "error",
@@ -664,6 +635,26 @@ export const quickAskDetailed = async (prompt, ctx, onProgress, history = []) =>
 export const quickAsk = async (prompt, ctx, onProgress, history = []) => {
   const result = await quickAskDetailed(prompt, ctx, onProgress, history);
   return result.answer;
+};
+
+export const requestDashboardInsightDetailed = async (ctx) => {
+  const prompt = buildDashboardInsightPrompt(ctx);
+  try {
+    const backend = await requestBackendAI(buildBackendPayload(prompt, ctx, [], "chat"));
+    if (backend?.answer) return backend;
+    return {
+      answer: "AI-Backend nicht konfiguriert. Bitte Proxy/Endpoint prüfen.",
+      provider: "none",
+      model: "none",
+    };
+  } catch (err) {
+    console.error("requestDashboardInsightDetailed failed:", err);
+    return {
+      answer: backendUnavailableText(err),
+      provider: "error",
+      model: "error",
+    };
+  }
 };
 
 export async function* streamChatAnswer(prompt, ctx, history = [], onProgress, onMeta) {
@@ -680,36 +671,85 @@ export async function* streamChatAnswer(prompt, ctx, history = [], onProgress, o
   };
 
   try {
-    if (useBackendAI()) {
-      const backend = await requestBackendAI(buildBackendPayload(resolvedPrompt, ctx, history, "chat"));
-      if (backend?.answer) {
-        onMeta?.({ provider: backend.provider, model: backend.model });
-        for await (const chunk of streamWords(backend.answer, 8)) yield chunk;
-        return;
-      }
-      for await (const chunk of streamWords("Backend AI hat leer geantwortet. Bitte erneut versuchen.", 12)) yield chunk;
+    const backend = await requestBackendAI(buildBackendPayload(resolvedPrompt, ctx, history, "chat"));
+    if (backend?.answer) {
+      onMeta?.({ provider: backend.provider || "backend", model: backend.model || "unknown" });
+      for await (const chunk of streamWords(backend.answer, 8)) yield chunk;
       return;
     }
 
-    for await (const chunk of streamWords("AI-Backend erforderlich. Bitte Proxy/Endpoint prüfen.", 12)) yield chunk;
-    return;
+    for await (const chunk of streamWords("AI-Backend nicht konfiguriert. Bitte Proxy/Endpoint prüfen.", 12)) yield chunk;
   } catch (err) {
-    console.error("chat streaming AI failed, fallback used:", err);
-    for await (const chunk of streamWords(backendUnavailableText(err), 14)) yield chunk;
+    console.error("streamChatAnswer failed:", err);
+    for await (const chunk of streamWords("Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.", 12)) yield chunk;
   }
 }
+
+export const DASHBOARD_INSIGHT_PROMPT = [
+  "[TASK:dashboard_insight]",
+  "Erstelle einen prägnanten Dashboard-Insight auf Basis des übergebenen Kontexts.",
+].join("\n");
+
+
+
+export const buildDashboardInsightPrompt = (ctx) => {
+  void ctx;
+  return DASHBOARD_INSIGHT_PROMPT;
+};
+
+const normalizeInsightText = (text) => String(text || "").replace(/\s+/g, " ").trim();
+
+export const normalizeDashboardInsight = (text) => {
+  const cleaned = normalizeInsightText(text);
+  const lowered = cleaned.toLowerCase();
+  const forbidden = [
+    "gesamtdurchschnitt",
+    "durchschnitt",
+    "schnitt",
+    "anzahl",
+    "noten gesamt",
+    "beste fach",
+    "bestes fach",
+    "starkstes fach",
+    "worst",
+    "schwachstes fach",
+  ];
+  if (forbidden.some((k) => lowered.includes(k))) return "";
+
+  const hasContradiction =
+    ((lowered.includes("stabil") || lowered.includes("ruhig")) &&
+      (lowered.includes("schwanken deutlich") || lowered.includes("stark schwank") || lowered.includes("sehr wechselhaft"))) ||
+    (lowered.includes("eindeutig besser") && lowered.includes("eindeutig schlechter"));
+  if (hasContradiction) return "";
+
+  return cleaned;
+};
+
+export const isDashboardInsightBackendError = (text = "") => {
+  const t = String(text || "").toLowerCase();
+  return (
+    !t.trim() ||
+    t.includes("backend ai") ||
+    t.includes("ai-backend erforderlich") ||
+    t.includes("proxy/endpoint") ||
+    t.includes("nicht verfügbar") ||
+    t.includes("nicht verfugbar") ||
+    t.includes("please configure")
+  );
+};
 
 export const dashboardInsight = (ctx) => {
   if (!ctx.grades.length) return "Noch keine Trenddaten: Sobald mehr Noten vorliegen, zeigt die Analyse das Bild deutlicher.";
 
   const grades = Array.isArray(ctx.grades) ? [...ctx.grades] : [];
-  const avg = Number(ctx.average || 0);
   const trend = Number(ctx.trendSlope || 0);
-  const subject = ctx.worstSubject?.subject || ctx.bestSubject?.subject || "Deine Leistungen";
 
-  const quality = avg <= 1.8 ? "insgesamt stark" : avg <= 2.8 ? "insgesamt solide" : "insgesamt eher wechselhaft";
+  const values = grades.map((g) => Number(g?.grade)).filter((n) => Number.isFinite(n));
+  const weakShare = values.length ? values.filter((n) => n >= 4).length / values.length : 0;
+  const strongShare = values.length ? values.filter((n) => n <= 2).length / values.length : 0;
+  const quality = strongShare >= 0.5 ? "insgesamt stabil" : weakShare >= 0.35 ? "noch uneinheitlich" : "weitgehend ausgeglichen";
+
   const variability = (() => {
-    const values = grades.map((g) => Number(g?.grade)).filter((n) => Number.isFinite(n));
     if (values.length < 2) return "noch nicht gut beurteilbar";
     const range = Math.max(...values) - Math.min(...values);
     if (range >= 4) return "schwanken deutlich";
@@ -717,21 +757,35 @@ export const dashboardInsight = (ctx) => {
     return "relativ stabil";
   })();
 
-  const sortedByImpact = grades
-    .map((g) => ({
-      grade: Number(g?.grade),
-      weight: Number(g?.weight || 1),
-      subject: String(g?.subject || subject),
-      date: g?.date,
-    }))
-    .filter((g) => Number.isFinite(g.grade))
-    .sort((a, b) => (b.grade * b.weight) - (a.grade * a.weight) || b.weight - a.weight);
+  const hasStrongOutlier = values.some((n) => n <= 1.5);
+  const hasWeakOutlier = values.some((n) => n >= 5);
+  const stats = Array.isArray(ctx?.subjectStats) ? ctx.subjectStats.filter((s) => s?.subject) : [];
+  const strongerSubject = stats[0]?.subject || null;
+  const weakerSubject = stats.length > 1 ? stats[stats.length - 1]?.subject : null;
 
-  const worstGrade = sortedByImpact.find((g) => g.grade >= 5) || sortedByImpact[0];
-  const strongGrades = grades
-    .map((g) => Number(g?.grade))
-    .filter((n) => Number.isFinite(n) && n <= 1.5);
-  const strongText = strongGrades.length >= 2 ? `mehrere 1er` : strongGrades.length === 1 ? `eine 1` : `gute Einzelergebnisse`;
+  const openingText = (() => {
+    if (variability === "schwanken deutlich") return "Deine Leistungen zeigen aktuell ein wechselhaftes Muster mit klaren Ausschlägen.";
+    if (variability === "schwanken merklich") return `Deine Leistungen wirken ${quality}, aber mit spürbaren Schwankungen zwischen den Fächern.`;
+    return `Deine Leistungen wirken ${quality} und im Verlauf eher ruhig.`;
+  })();
+
+  const subjectFocus = (() => {
+    if (strongerSubject && weakerSubject && strongerSubject !== weakerSubject) {
+      return `In ${strongerSubject} ist bereits eine stabile Linie erkennbar, während ${weakerSubject} noch mehr Konstanz braucht.`;
+    }
+    if (strongerSubject) {
+      return `In ${strongerSubject} ist bereits eine klare Linie erkennbar.`;
+    }
+    return "Je nach Fach zeigen sich unterschiedliche Entwicklungsphasen.";
+  })();
+
+  const middleText = hasStrongOutlier && hasWeakOutlier
+    ? "Es gibt sowohl klare Spitzenleistungen als auch einzelne deutliche Ausreißer."
+    : hasStrongOutlier
+      ? "Positive Ausreißer zeigen, dass sich gezielte Vorbereitung schnell auszahlt."
+      : hasWeakOutlier
+        ? "Einzelne schwächere Ausreißer bremsen den Verlauf derzeit noch aus."
+        : "Die Leistungen bewegen sich ohne extreme Ausreißer in einem mittleren Bereich.";
 
   const trendText = trend > 0.08
     ? "aktuell eher fallend"
@@ -739,9 +793,5 @@ export const dashboardInsight = (ctx) => {
       ? "aktuell eher steigend"
       : "aktuell eher stabil";
 
-  const outlierText = worstGrade
-    ? `Besonders die ${Number(worstGrade.grade).toFixed(1).replace(".", ",")} fällt durch ihre hohe Gewichtung von x${Math.round(worstGrade.weight)} stark ins Gewicht`
-    : "Einzelne Werte fallen stärker auf";
-
-  return `Deine Leistungen in ${subject} sind ${quality}, aber ${variability}. ${outlierText}, werden aber durch ${strongText} gut ausgeglichen. Der Trend wirkt ${trendText}, mit einzelnen Ausreißern.`;
+  return `${openingText} ${subjectFocus} ${middleText} Der Gesamttrend wirkt ${trendText}.`;
 };

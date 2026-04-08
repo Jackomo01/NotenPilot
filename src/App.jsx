@@ -17,8 +17,42 @@ import Landing   from "./pages/Landing.jsx";
 import AuthPage  from "./pages/AuthPage.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import { GradesPage, StatsPage, SettingsPage } from "./pages/index.jsx";
-import { getUserQuestionQuota, saveUserCloudData, subscribeUserCloudData } from "./utils/cloudData.js";
+import { DAILY_AI_PILOT_QUESTIONS, getUserQuestionQuota, saveUserCloudData, subscribeUserCloudData } from "./utils/cloudData.js";
 import { signOutUser } from "./utils/firebase.js";
+
+const getMsUntilNextBerlinMidnight = () => {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const currentBerlinTime = Date.UTC(
+    Number(map.year),
+    Number(map.month) - 1,
+    Number(map.day),
+    Number(map.hour),
+    Number(map.minute),
+    Number(map.second)
+  );
+  const nextBerlinMidnight = Date.UTC(
+    Number(map.year),
+    Number(map.month) - 1,
+    Number(map.day) + 1,
+    0,
+    0,
+    0
+  );
+
+  return Math.max(60_000, nextBerlinMidnight - currentBerlinTime + 1_000);
+};
 
 const GlobalStyles = () => (
   <style>{`
@@ -66,7 +100,7 @@ const GlobalStyles = () => (
 
 function AppShell() {
   const [grades,      setGrades]      = useLS("np6_grades",   SEED_GRADES);
-  const [subjects,    setSubjects]    = useLS("np6_subjects", SEED_SUBJECTS);
+  const [subjects,    setSubjects]    = useLS("np6_subjects", []);
   const [user,        setUser]        = useLS("np6_user",     null);
   const [page,        setPage]        = useState("dashboard");
   const [view,        setView]        = useState("landing");
@@ -75,10 +109,23 @@ function AppShell() {
   const [highlightId, setHighlightId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [askedQuestions, setAskedQuestions] = useState([]);
-  const [questionsRemaining, setQuestionsRemaining] = useState(3);
+  const [questionsRemaining, setQuestionsRemaining] = useState(DAILY_AI_PILOT_QUESTIONS);
   const [cloudSynced, setCloudSynced] = useState(false);
   const cloudReadyRef = useRef(false);
   const lastCloudSigRef = useRef("");
+
+  const refreshQuestionQuota = useCallback(async () => {
+    if (!user?.uid) return;
+
+    try {
+      const quota = await getUserQuestionQuota(user.uid, DAILY_AI_PILOT_QUESTIONS);
+      if (Number.isFinite(quota?.remaining)) {
+        setQuestionsRemaining(quota.remaining);
+      }
+    } catch (err) {
+      console.error("Quota refresh failed:", err);
+    }
+  }, [user?.uid]);
 
   useEffect(() => {
     if (user) setView("app");
@@ -102,7 +149,7 @@ function AppShell() {
       user.uid,
       async (remoteData) => {
         if (!remoteData) {
-          const initialPayload = { grades: [], subjects: [...SEED_SUBJECTS] };
+          const initialPayload = { grades: [], subjects: [] };
           const initialSig = JSON.stringify(initialPayload);
           await saveUserCloudData(user.uid, initialPayload);
           setGrades(initialPayload.grades);
@@ -148,20 +195,53 @@ function AppShell() {
 
   useEffect(() => {
     if (!user?.uid) {
-      setQuestionsRemaining(3);
+      setQuestionsRemaining(DAILY_AI_PILOT_QUESTIONS);
       return;
     }
 
-    getUserQuestionQuota(user.uid, 3)
-      .then((quota) => {
-        if (Number.isFinite(quota?.remaining)) {
-          setQuestionsRemaining(quota.remaining);
+    refreshQuestionQuota();
+  }, [user?.uid, refreshQuestionQuota]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    let timeoutId = null;
+    let cancelled = false;
+
+    const scheduleNextRefresh = () => {
+      const delay = getMsUntilNextBerlinMidnight();
+      timeoutId = window.setTimeout(async () => {
+        if (cancelled) return;
+        await refreshQuestionQuota();
+        if (!cancelled) {
+          scheduleNextRefresh();
         }
-      })
-      .catch((err) => {
-        console.error("Initial quota load failed:", err);
-      });
-  }, [user?.uid]);
+      }, delay);
+    };
+
+    const handleFocus = () => {
+      refreshQuestionQuota();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshQuestionQuota();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    scheduleNextRefresh();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [user?.uid, refreshQuestionQuota]);
 
   const ctx = useMemo(() => ({ grades, setGrades, subjects, setSubjects }), [grades, setGrades, subjects, setSubjects]);
 
@@ -173,7 +253,7 @@ function AppShell() {
       console.error("Logout failed:", err);
     }
     setGrades([]);
-    setSubjects([...SEED_SUBJECTS]);
+    setSubjects([]);
     setUser(null);
     setView("landing");
   };

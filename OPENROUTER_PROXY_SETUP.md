@@ -8,10 +8,14 @@ PowerShell (im Projektordner):
 
 ```powershell
 $env:OPENROUTER_API_KEY = "<DEIN_OPENROUTER_KEY>"
-$env:OPENROUTER_MODEL = "qwen/qwen3.6-plus:free"
+$env:OPENROUTER_MODEL = "openrouter/free"
+$env:OPENROUTER_FALLBACK_MODELS = "qwen/qwen3.6-plus:free,nousresearch/hermes-3-llama-3.1-405b:free,qwen/qwen3-next-80b-a3b-instruct:free"
 $env:OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 $env:OPENROUTER_HTTP_REFERER = "http://localhost:5173"
 $env:OPENROUTER_APP_TITLE = "NotenPilot"
+$env:ROUTEWAY_API_KEY = "<DEIN_ROUTEWAY_KEY>"
+$env:ROUTEWAY_BASE_URL = "https://api.routeway.ai/v1"
+$env:ROUTEWAY_MODEL = "step-3.5-flash:free"
 ```
 
 Wichtig: Den Key nie in `VITE_...` Variablen speichern.
@@ -28,12 +32,31 @@ Beispiel in `.env.local`:
 
 ```env
 OPENROUTER_API_KEY=<DEIN_OPENROUTER_KEY>
-OPENROUTER_MODEL=qwen/qwen3.6-plus:free
-OPENROUTER_FALLBACK_MODEL=openrouter/auto
+OPENROUTER_MODEL=openrouter/free
+OPENROUTER_FALLBACK_MODELS=qwen/qwen3.6-plus:free,nousresearch/hermes-3-llama-3.1-405b:free,qwen/qwen3-next-80b-a3b-instruct:free
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_HTTP_REFERER=http://localhost:5173
 OPENROUTER_APP_TITLE=NotenPilot
+ROUTEWAY_API_KEY=<DEIN_ROUTEWAY_KEY>
+ROUTEWAY_BASE_URL=https://api.routeway.ai/v1
+ROUTEWAY_MODEL=step-3.5-flash:free
 ```
+
+OpenRouter nutzt hier einen Hybrid-Ansatz:
+- openrouter/free fuer Discovery und breite Verfuegbarkeit
+- gepinnte :free-Modelle als reproduzierbarere Fallbacks
+
+Konfigurierte Kandidaten:
+- openrouter/free
+- qwen/qwen3.6-plus:free
+- nousresearch/hermes-3-llama-3.1-405b:free
+- qwen/qwen3-next-80b-a3b-instruct:free
+
+Provider-Reihenfolge im Proxy:
+- Routeway
+- HuggingFace
+- OpenRouter
+- Gemini
 
 ## 2. Frontend auf Backend-Provider stellen
 

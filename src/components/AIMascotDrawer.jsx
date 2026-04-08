@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLS } from "../hooks/index.jsx";
 import { buildAIContext, getSuggestions, streamChatAnswer } from "../utils/ai.jsx";
-import { consumeUserQuestionQuota, loadUserCloudData } from "../utils/cloudData.js";
+import { consumeUserQuestionQuota, DAILY_AI_PILOT_QUESTIONS, loadUserCloudData } from "../utils/cloudData.js";
 import { C, R } from "../utils/tokens.jsx";
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -116,7 +116,7 @@ const AIMascotDrawer = memo(({
 
     if (user?.uid) {
       try {
-        const quota = await consumeUserQuestionQuota(user.uid, 3);
+        const quota = await consumeUserQuestionQuota(user.uid, DAILY_AI_PILOT_QUESTIONS);
         setQuestionsRemaining?.(quota.remaining);
         if (!quota.allowed) {
           const limitMsg = {
@@ -131,7 +131,16 @@ const AIMascotDrawer = memo(({
           return;
         }
       } catch {
-        // On quota read/write failure, proceed to avoid blocking core chat.
+        const quotaErrorMsg = {
+          id: `wq_${Date.now()}`,
+          role: "assistant",
+          text: "Fragenlimit konnte gerade nicht geprüft werden. Bitte versuche es in ein paar Sekunden erneut.",
+          ts: Date.now(),
+          streaming: false,
+          followUps: [],
+        };
+        setMessages((prev) => [...prev, quotaErrorMsg]);
+        return;
       }
     }
 
@@ -321,15 +330,16 @@ const AIMascotDrawer = memo(({
               right: 20,
               bottom: 90,
               transform: `translate(${translatePnlX}px, ${translatePnlY}px)`,
-              width: 340,
-              height: 520,
+              width: "min(360px, calc(100vw - 24px))",
+              height: "min(520px, calc(100vh - 110px))",
               background: C.bg4,
               border: `1px solid ${C.line}`,
               borderRadius: R.xl,
+              overflow: "hidden",
               boxShadow: "0 20px 40px rgba(0, 0, 0, 0.25)",
               zIndex: 430,
               display: "grid",
-              gridTemplateRows: "auto 1fr 64px",
+              gridTemplateRows: "auto 1fr auto",
               pointerEvents: "auto",
               cursor: panelDragging ? "grabbing" : "default",
             }}
@@ -393,27 +403,11 @@ const AIMascotDrawer = memo(({
             {/* Chat Area */}
             <div ref={listRef} style={{
               overflowY: "auto",
-              padding: "12px 12px",
+              padding: "10px 12px 8px",
               display: "flex",
               flexDirection: "column",
-              gap: 10,
+              gap: 8,
             }}>
-              {messages.length === 0 && (
-                <div style={{
-                  padding: "12px",
-                  background: C.bg3,
-                  borderRadius: R.m,
-                  color: C.t1,
-                  fontSize: 12,
-                  lineHeight: 1.4,
-                  textAlign: "center",
-                  marginTop: "auto",
-                  marginBottom: "auto",
-                }}>
-                  Was möchtest du über deine Noten-Daten wissen?
-                </div>
-              )}
-
               {messages.length === 0 && (
                 <div style={{
                   display: "flex",
@@ -433,7 +427,7 @@ const AIMascotDrawer = memo(({
                         background: C.bg3,
                         color: C.t1,
                         fontSize: 12,
-                        borderRadius: R.m,
+                        borderRadius: R.l,
                         padding: "9px 12px",
                         minHeight: 40,
                         width: "100%",
@@ -464,12 +458,14 @@ const AIMascotDrawer = memo(({
               {messages.map((m) => (
                 <div key={m.id} style={{
                   display: "flex",
-                  justifyContent: m.role === "user" ? "flex-end" : "flex-start",
+                  flexDirection: "column",
+                  alignItems: m.role === "user" ? "flex-end" : "flex-start",
+                  gap: 4,
                 }}>
                   <div style={{
                     maxWidth: "85%",
                     padding: "8px 11px",
-                    borderRadius: m.role === "user" ? R.l : R.l,
+                    borderRadius: R.l,
                     background: m.role === "user" ? C.acc : C.bg3,
                     color: m.role === "user" ? C.t0 : C.t1,
                     fontSize: 12,
@@ -480,6 +476,16 @@ const AIMascotDrawer = memo(({
                     {m.text || (m.streaming ? "..." : "")}
                     {m.streaming && <span style={{ marginLeft: 3, opacity: 0.6 }}>▍</span>}
                   </div>
+                  {m.role === "assistant" && m.aiModel && (
+                    <div style={{
+                      fontSize: 10,
+                      color: C.t2,
+                      fontWeight: 600,
+                      paddingRight: 8,
+                    }}>
+                      {m.aiProvider && `[${m.aiProvider}] `}{m.aiModel}
+                    </div>
+                  )}
                 </div>
               ))}
 
@@ -499,7 +505,7 @@ const AIMascotDrawer = memo(({
                         background: C.bg3,
                         color: C.t1,
                         fontSize: 12,
-                        borderRadius: R.m,
+                        borderRadius: R.l,
                         padding: "9px 12px",
                         minHeight: 40,
                         width: "100%",
@@ -530,7 +536,7 @@ const AIMascotDrawer = memo(({
             {/* Input Area */}
             <div style={{
               borderTop: `1px solid ${C.line}`,
-              padding: "8px 10px",
+              padding: "9px 12px 12px",
               display: "grid",
               gap: 6,
             }}>
@@ -563,7 +569,7 @@ const AIMascotDrawer = memo(({
                     flex: 1,
                     background: C.bg3,
                     border: `1px solid ${C.line}`,
-                    borderRadius: R.s,
+                    borderRadius: R.l,
                     color: C.t0,
                     fontSize: 13,
                     padding: "11px 13px",
@@ -587,7 +593,7 @@ const AIMascotDrawer = memo(({
                   style={{
                     width: 46,
                     height: 46,
-                    borderRadius: R.s,
+                    borderRadius: R.l,
                     background: !input.trim() || sending || questionsRemaining === 0 ? C.bg3 : C.acc,
                     color: C.t0,
                     border: `1px solid ${!input.trim() || sending || questionsRemaining === 0 ? C.line : `${C.acc}66`}`,
