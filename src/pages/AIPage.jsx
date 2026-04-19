@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { useApp } from "../context/index.jsx";
 import { C, R } from "../utils/tokens.jsx";
 import { Card, SparkBtn } from "../components/ui.jsx";
-import { buildAIContext, getAIProvider, getSuggestions, streamChatAnswer } from "../utils/ai.jsx";
+import { AI_REQUEST_COOLDOWN_MS, buildAIContext, getAIProvider, getSuggestions, isOpenRouterOnlyEnabled, streamChatAnswer, waitForAICooldown } from "../utils/ai.jsx";
 import { consumeUserQuestionQuota, DAILY_AI_PILOT_QUESTIONS, loadUserCloudData } from "../utils/cloudData.js";
 
 const normalizeQ = (q) => String(q || "").trim().toLowerCase();
@@ -23,7 +23,9 @@ const AIPage = memo(({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [engineProgress, setEngineProgress] = useState("");
+  const [cooldownRemainingMs, setCooldownRemainingMs] = useState(0);
   const listRef = useRef(null);
+  const cooldownTimerRef = useRef(null);
 
   const ctx = useMemo(() => buildAIContext(grades, subjects), [grades, subjects]);
 
@@ -37,9 +39,19 @@ const AIPage = memo(({
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    if (!cooldownRemainingMs) return undefined;
+    cooldownTimerRef.current = window.setInterval(() => {
+      setCooldownRemainingMs((current) => Math.max(0, current - 250));
+    }, 250);
+    return () => {
+      if (cooldownTimerRef.current) window.clearInterval(cooldownTimerRef.current);
+    };
+  }, [cooldownRemainingMs]);
+
   const send = async (forcedPrompt) => {
     const prompt = (forcedPrompt ?? input).trim();
-    if (!prompt || sending) return;
+    if (!prompt || sending || cooldownRemainingMs > 0) return;
 
     if (user?.uid && !cloudSynced) {
       setMessages((prev) => [...prev, {
@@ -80,6 +92,7 @@ const AIPage = memo(({
 
     setSending(true);
     setInput("");
+    setCooldownRemainingMs(AI_REQUEST_COOLDOWN_MS);
 
     const userMsg = { id: `u_${Date.now()}`, role: "user", text: prompt, ts: Date.now() };
     const assistantId = `a_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -95,6 +108,8 @@ const AIPage = memo(({
     };
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
+
+    await waitForAICooldown("ai-page");
 
     let runtimeGrades = grades;
     let runtimeSubjects = subjects;
@@ -162,6 +177,23 @@ const AIPage = memo(({
       >
         <div>
           <h2 style={{ fontSize: 20, fontWeight: 700, color: C.t0, letterSpacing: "-0.02em", marginBottom: 3 }}>AI PILOT</h2>
+          {isOpenRouterOnlyEnabled() && (
+            <div style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              marginTop: 4,
+              fontSize: 10,
+              fontWeight: 700,
+              color: C.acc,
+              background: `${C.acc}18`,
+              border: `1px solid ${C.acc}30`,
+              borderRadius: R.f,
+              padding: "3px 8px",
+            }}>
+              Nur OpenRouter aktiv
+            </div>
+          )}
           {!!engineProgress && <p style={{ fontSize: 11, color: C.t2, marginTop: 4 }}>{engineProgress}</p>}
           {Number.isFinite(questionsRemaining) && (
             <p style={{
@@ -206,8 +238,13 @@ const AIPage = memo(({
       <Card pad="0" style={{ overflow: "hidden", borderRadius: R.l, border: `1px solid ${C.lineH}` }}>
         <div ref={listRef} style={{ maxHeight: 420, overflowY: "auto", padding: "16px 16px 10px", display: "grid", gap: 10 }}>
           {messages.length === 0 && (
-            <div style={{ fontSize: 13, color: C.t2, padding: "8px 4px" }}>
-              Starte mit einer Frage wie: "Welche Note habe ich im März in Mathe geschrieben?"
+            <div style={{ display: "grid", gap: 10, padding: "8px 4px" }}>
+              {[1,2,3].map((i) => (
+                <div key={i} style={{ height: 18, borderRadius: 999, background: `linear-gradient(90deg, ${C.bg4} 25%, ${C.line} 50%, ${C.bg4} 75%)`, backgroundSize: "200% 100%", animation: "sk 1.2s ease-in-out infinite" }} />
+              ))}
+              <div style={{ fontSize: 13, color: C.t2 }}>
+                Starte mit einer Frage wie: "Welche Note habe ich im März in Mathe geschrieben?"
+              </div>
             </div>
           )}
 
@@ -224,6 +261,8 @@ const AIPage = memo(({
                   fontSize: 13,
                   lineHeight: 1.45,
                   whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere",
+                  wordBreak: "break-word",
                 }}
               >
                 {m.text || (m.streaming ? "…" : "")}
@@ -272,6 +311,24 @@ const AIPage = memo(({
               ))}
             </div>
           )}
+
+          {sending && (
+            <div style={{ display: "grid", gap: 8, padding: "2px 0 0" }}>
+              {[1, 2].map((i) => (
+                <div
+                  key={i}
+                  style={{
+                    height: 14,
+                    width: i === 1 ? "72%" : "56%",
+                    borderRadius: 999,
+                    background: `linear-gradient(90deg, ${C.bg4} 25%, ${C.line} 50%, ${C.bg4} 75%)`,
+                    backgroundSize: "200% 100%",
+                    animation: "sk 1.2s ease-in-out infinite",
+                  }}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         <div style={{ borderTop: `1px solid ${C.line}`, padding: 12, display: "flex", gap: 8 }}>
@@ -298,7 +355,9 @@ const AIPage = memo(({
               fontFamily: "inherit",
             }}
           />
-          <SparkBtn onClick={() => send()} disabled={!input.trim() || sending || questionsRemaining === 0}>Senden</SparkBtn>
+          <SparkBtn onClick={() => send()} disabled={!input.trim() || sending || questionsRemaining === 0 || cooldownRemainingMs > 0}>
+            {cooldownRemainingMs > 0 ? `Warte ${Math.ceil(cooldownRemainingMs / 1000)}s` : "Senden"}
+          </SparkBtn>
         </div>
       </Card>
     </motion.div>

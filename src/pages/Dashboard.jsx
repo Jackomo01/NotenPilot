@@ -8,15 +8,13 @@ import { C, R } from "../utils/tokens.jsx";
 import { Sk, Card, Lbl, ChartTip } from "../components/ui.jsx";
 import {
   buildAIContext,
-  buildDashboardInsightPrompt,
-  dashboardInsight,
-  isDashboardInsightBackendError,
-  normalizeDashboardInsight,
   requestDashboardInsightDetailed,
 } from "../utils/ai.jsx";
 import { loadDashboardInsight, saveDashboardInsight } from "../utils/cloudData.js";
 
 const AnimNum = ({ to, dec=0 }) => { const v = useCountUp(to??0); return <span>{v.toFixed(dec)}</span>; };
+
+const AI_INSIGHT_UNAVAILABLE = "AI Insight ist aktuell nicht verfügbar. Bitte versuche es in ein paar Sekunden erneut.";
 
 
 
@@ -133,7 +131,7 @@ const NoteChart = ({ data, avgColor, height = 210 }) => {
 
 
 
-const Dashboard = memo(({ loading, user }) => {
+const Dashboard = memo(({ loading, user, cloudSynced = false }) => {
   const { grades, subjects } = useApp();
   const aiCtx = useMemo(() => buildAIContext(grades, subjects), [grades, subjects]);
   const avg = wAvg(grades);
@@ -161,94 +159,99 @@ const Dashboard = memo(({ loading, user }) => {
   const best  = sStats[0];
   const worst = sStats.length > 1 ? sStats[sStats.length-1] : null;
   const avgColor = avg ? gc(avg) : C.t2;
-  const [insight, setInsight] = useState(() => (grades.length ? "AI Insight wird geladen..." : dashboardInsight(aiCtx)));
-  const lastInsightRefreshCountRef = useRef(-1);
-  const refreshCountKey = user?.uid ? `np6_dashboard_insight_refresh_count_${user.uid}` : null;
+  const [insight, setInsight] = useState(() => (grades.length ? "AI Insight wird geladen..." : "Noch keine Noten vorhanden."));
+  const [insightSource, setInsightSource] = useState("loading");
+  const [insightBootstrapped, setInsightBootstrapped] = useState(false);
+  const lastInsightCountRef = useRef(-1);
 
   useEffect(() => {
     let cancelled = false;
-    if (!user?.uid) return () => { cancelled = true; };
 
-    const loadPersisted = async () => {
-      try {
-        const persisted = await loadDashboardInsight(user.uid);
-        if (cancelled || !persisted?.text) return;
-        setInsight(persisted.text);
-      } catch (err) {
-        console.error("Load dashboard insight from cloud failed:", err);
+    const bootstrap = async () => {
+      setInsightBootstrapped(false);
+      if (!user?.uid) {
+        lastInsightCountRef.current = -1;
+        setInsight(grades.length ? "AI Insight wird geladen..." : "Noch keine Noten vorhanden.");
+        setInsightSource("loading");
+        setInsightBootstrapped(true);
+        return;
       }
 
-      try {
-        const localCount = Number(window.localStorage.getItem(`np6_dashboard_insight_refresh_count_${user.uid}`));
-        if (Number.isFinite(localCount) && localCount >= 0) {
-          lastInsightRefreshCountRef.current = localCount;
+      setInsight(grades.length ? "AI Insight wird geladen..." : "Noch keine Noten vorhanden.");
+      setInsightSource("loading");
+
+      const loadResult = await Promise.allSettled([loadDashboardInsight(user.uid)]);
+      const cloudInsight = loadResult[0]?.status === "fulfilled" ? loadResult[0].value : null;
+      const cloudText = String(cloudInsight?.text || "").trim();
+      const cloudCount = Number.isFinite(Number(cloudInsight?.count)) ? Number(cloudInsight.count) : -1;
+      if (cancelled) return;
+
+      if (cloudText) {
+        setInsight(cloudText);
+        setInsightSource("cache");
+        lastInsightCountRef.current = cloudCount >= 0 ? cloudCount : grades.length;
+
+        if (cloudCount < 0 && user?.uid) {
+          await saveDashboardInsight(user.uid, {
+            text: cloudText,
+            count: lastInsightCountRef.current,
+          }).catch(() => {});
         }
-      } catch {
-        // Keep in-memory default if localStorage is unavailable.
+      } else {
+        lastInsightCountRef.current = -1;
       }
+
+      setInsightBootstrapped(true);
     };
 
-    loadPersisted();
+    bootstrap();
     return () => { cancelled = true; };
-  }, [user?.uid]);
+  }, [grades.length, user?.uid]);
 
   useEffect(() => {
     let cancelled = false;
     if (!grades.length) {
-      setInsight(dashboardInsight(aiCtx));
+      setInsight("Noch keine Noten vorhanden.");
+      setInsightSource("loading");
       return () => { cancelled = true; };
     }
 
-    const currentCount = grades.length;
-    const lastCount = lastInsightRefreshCountRef.current;
-    const isFirstGeneration = lastCount < 0;
-    const addedNotesSinceLastRefresh = isFirstGeneration ? currentCount : Math.max(0, currentCount - lastCount);
-    const shouldRefreshNow = isFirstGeneration || addedNotesSinceLastRefresh >= 2;
+    if (!insightBootstrapped) {
+      return () => { cancelled = true; };
+    }
 
-    if (!shouldRefreshNow) {
+    if (!cloudSynced) {
+      return () => { cancelled = true; };
+    }
+
+    const hasPersistedInsight = Boolean(String(insight || "").trim()) && (insightSource === "cache" || insightSource === "ai");
+    if (hasPersistedInsight && grades.length === lastInsightCountRef.current) {
+      return () => { cancelled = true; };
+    }
+
+    const shouldGenerate = lastInsightCountRef.current < 0 || grades.length > lastInsightCountRef.current;
+    if (!shouldGenerate) {
       return () => { cancelled = true; };
     }
 
     const run = async () => {
-      try {
-        const result = await requestDashboardInsightDetailed(aiCtx);
-        const rawAnswer = String(result?.answer || "");
-        const answer = normalizeDashboardInsight(rawAnswer);
-        if (cancelled) return;
+      const result = await requestDashboardInsightDetailed(aiCtx);
+      const rawAnswer = String(result?.answer || "").trim();
+      if (cancelled) return;
 
-        const backendInvalid = !answer || isDashboardInsightBackendError(rawAnswer);
-        const nextInsight = backendInvalid
-          ? dashboardInsight(aiCtx)
-          : answer;
+      const nextInsight = rawAnswer || AI_INSIGHT_UNAVAILABLE;
+      setInsight(nextInsight);
+      setInsightSource(rawAnswer ? "ai" : "error");
 
-        setInsight(nextInsight);
-        lastInsightRefreshCountRef.current = currentCount;
-        if (refreshCountKey) {
-          window.localStorage.setItem(refreshCountKey, String(currentCount));
-        }
-
-        if (user?.uid) {
-          await saveDashboardInsight(user.uid, { text: nextInsight });
-        }
-      } catch {
-        if (!cancelled) {
-          setInsight(dashboardInsight(aiCtx));
-          lastInsightRefreshCountRef.current = currentCount;
-          if (refreshCountKey) {
-            window.localStorage.setItem(refreshCountKey, String(currentCount));
-          }
-          if (user?.uid) {
-            saveDashboardInsight(user.uid, { text: dashboardInsight(aiCtx) }).catch((err) => {
-              console.error("Save fallback insight to cloud failed:", err);
-            });
-          }
-        }
+      if (user?.uid) {
+        await saveDashboardInsight(user.uid, { text: nextInsight, count: grades.length });
       }
+      lastInsightCountRef.current = grades.length;
     };
 
     run();
     return () => { cancelled = true; };
-  }, [aiCtx, grades.length, refreshCountKey, user?.uid]);
+  }, [aiCtx, cloudSynced, insightBootstrapped, insightSource, user?.uid, grades.length]);
 
   if (loading) return (
     <div style={{ display:"grid", gap:16 }}>
@@ -266,8 +269,35 @@ const Dashboard = memo(({ loading, user }) => {
       </div>
 
       <Card pad="16px 20px" style={{ background:`linear-gradient(180deg, ${C.bg4} 0%, ${C.bg3} 100%)`, border:`1px solid ${C.line}` }}>
-        <div style={{ fontSize:11, fontWeight:700, color:C.t2, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:8 }}>AI PILOT</div>
-        <div style={{ fontSize:13, lineHeight:1.5, color:C.t0 }}>{insight}</div>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, marginBottom:8 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:C.t2, textTransform:"uppercase", letterSpacing:"0.05em" }}>AI PILOT</div>
+          <div style={{
+            fontSize:10,
+            fontWeight:700,
+            borderRadius:R.f,
+            padding:"3px 8px",
+            border:`1px solid ${insightSource === "ai" ? `${C.ok || "#46b97f"}66` : insightSource === "cache" ? `${C.acc}66` : `${C.wrn || "#f0b35a"}66`}`,
+            color: insightSource === "ai" ? (C.ok || "#46b97f") : insightSource === "cache" ? C.acc : (C.wrn || "#f0b35a"),
+            background: insightSource === "ai" ? `${C.ok || "#46b97f"}18` : insightSource === "cache" ? `${C.acc}18` : `${C.wrn || "#f0b35a"}18`,
+          }}>
+            {insightSource === "ai"
+              ? "Quelle: AI"
+              : insightSource === "cache"
+                ? "Quelle: AI-Cache"
+                : insightSource === "loading"
+                  ? "Quelle: lädt..."
+                    : "Quelle: AI-Fehler"}
+          </div>
+        </div>
+        {insightSource === "loading" && !insightBootstrapped ? (
+          <div style={{ display: "grid", gap: 8, padding: "6px 0 2px" }}>
+            <div style={{ height: 14, width: "78%", borderRadius: 999, background: `linear-gradient(90deg, ${C.bg4} 25%, ${C.line} 50%, ${C.bg4} 75%)`, backgroundSize: "200% 100%", animation: "sk 1.2s ease-in-out infinite" }} />
+            <div style={{ height: 14, width: "62%", borderRadius: 999, background: `linear-gradient(90deg, ${C.bg4} 25%, ${C.line} 50%, ${C.bg4} 75%)`, backgroundSize: "200% 100%", animation: "sk 1.2s ease-in-out infinite" }} />
+            <div style={{ height: 14, width: "49%", borderRadius: 999, background: `linear-gradient(90deg, ${C.bg4} 25%, ${C.line} 50%, ${C.bg4} 75%)`, backgroundSize: "200% 100%", animation: "sk 1.2s ease-in-out infinite" }} />
+          </div>
+        ) : (
+          <div style={{ fontSize:13, lineHeight:1.5, color:C.t0, overflowWrap: "anywhere", wordBreak: "break-word" }}>{insight}</div>
+        )}
       </Card>
 
       {/* 4 stat cards */}

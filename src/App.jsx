@@ -277,7 +277,7 @@ function AppShell() {
 
   const renderPage = () => {
     switch (page) {
-      case "dashboard": return <Dashboard loading={loading} user={user}/>;
+      case "dashboard": return <Dashboard loading={loading} user={user} cloudSynced={cloudSynced}/>;
       case "grades":    return <GradesPage onAdd={()=>setAddOpen(true)} highlightId={highlightId}/>;
       case "stats":     return <StatsPage/>;
       case "settings":  return <SettingsPage user={user} onLogout={handleLogout}/>;

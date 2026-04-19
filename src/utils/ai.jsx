@@ -1,4 +1,5 @@
 /* eslint-disable no-unused-vars */
+import { db } from "./storage.jsx";
 import { wAvg } from "./helpers.jsx";
 
 const MODEL_ID = "Qwen2.5-1.5B-Instruct-q4f32_1-MLC";
@@ -12,6 +13,29 @@ const AI_PROVIDER = AI_PROVIDER_ENV || (AI_ENDPOINT ? "backend" : "none");
 const AI_ENABLE_LOCAL_ENGINE = (import.meta.env.VITE_AI_ENABLE_LOCAL_ENGINE || "false").trim().toLowerCase() === "true";
 const AI_ALLOW_RULE_FALLBACK = (import.meta.env.VITE_AI_ALLOW_RULE_FALLBACK || "false").trim().toLowerCase() === "true";
 const BACKEND_TIMEOUT_MS = Math.max(15000, Number(import.meta.env.VITE_AI_TIMEOUT_MS || "60000"));
+export const AI_REQUEST_COOLDOWN_MS = 7000;
+export const AI_OPENROUTER_ONLY_KEY = "np6_ai_openrouter_only";
+const aiCooldownUntilByKey = new Map();
+
+export const getAIRequestCooldownRemainingMs = (key = "global") => {
+  const until = aiCooldownUntilByKey.get(String(key || "global"));
+  if (!until) return 0;
+  return Math.max(0, until - Date.now());
+};
+
+export const markAIRequestCooldown = (key = "global", cooldownMs = AI_REQUEST_COOLDOWN_MS) => {
+  aiCooldownUntilByKey.set(String(key || "global"), Date.now() + Math.max(0, Number(cooldownMs) || 0));
+};
+
+export const waitForAICooldown = async (key = "global", cooldownMs = AI_REQUEST_COOLDOWN_MS) => {
+  const remaining = getAIRequestCooldownRemainingMs(key);
+  if (remaining > 0) {
+    await new Promise((resolve) => setTimeout(resolve, remaining));
+  }
+  markAIRequestCooldown(key, cooldownMs);
+};
+
+export const isOpenRouterOnlyEnabled = () => db.get(AI_OPENROUTER_ONLY_KEY, false) === true;
 
 const toNum = (v) => {
   const n = parseFloat(String(v).replace(",", "."));
@@ -528,8 +552,9 @@ const backendUnavailableText = (err) => {
     : "Backend AI nicht verfügbar. Bitte Proxy/API-Key prüfen.";
 };
 
-const buildBackendPayload = (prompt, ctx, history = [], mode = "chat") => ({
+const buildBackendPayload = (prompt, ctx, history = [], mode = "chat", options = {}) => ({
   mode,
+  openrouterOnly: Boolean(options.openrouterOnly),
   prompt,
   context: {
     average: ctx.average,
@@ -615,7 +640,9 @@ export const getAIProvider = () => (AI_ENDPOINT ? (AI_PROVIDER || "backend") : "
 
 export const quickAskDetailed = async (prompt, ctx, onProgress, history = []) => {
   try {
-    const backend = await requestBackendAI(buildBackendPayload(prompt, ctx, history, "quick"));
+    const backend = await requestBackendAI(buildBackendPayload(prompt, ctx, history, "quick", {
+      openrouterOnly: isOpenRouterOnlyEnabled(),
+    }));
     if (backend?.answer) return backend;
     return {
       answer: "AI-Backend nicht konfiguriert. Bitte Proxy/Endpoint prüfen.",
@@ -640,7 +667,9 @@ export const quickAsk = async (prompt, ctx, onProgress, history = []) => {
 export const requestDashboardInsightDetailed = async (ctx) => {
   const prompt = buildDashboardInsightPrompt(ctx);
   try {
-    const backend = await requestBackendAI(buildBackendPayload(prompt, ctx, [], "chat"));
+    const backend = await requestBackendAI(buildBackendPayload(prompt, ctx, [], "chat", {
+      openrouterOnly: isOpenRouterOnlyEnabled(),
+    }));
     if (backend?.answer) return backend;
     return {
       answer: "AI-Backend nicht konfiguriert. Bitte Proxy/Endpoint prüfen.",
@@ -671,10 +700,12 @@ export async function* streamChatAnswer(prompt, ctx, history = [], onProgress, o
   };
 
   try {
-    const backend = await requestBackendAI(buildBackendPayload(resolvedPrompt, ctx, history, "chat"));
+    const backend = await requestBackendAI(buildBackendPayload(resolvedPrompt, ctx, history, "chat", {
+      openrouterOnly: isOpenRouterOnlyEnabled(),
+    }));
     if (backend?.answer) {
       onMeta?.({ provider: backend.provider || "backend", model: backend.model || "unknown" });
-      for await (const chunk of streamWords(backend.answer, 8)) yield chunk;
+      for await (const chunk of streamWords(backend.answer, 4)) yield chunk;
       return;
     }
 
@@ -687,7 +718,12 @@ export async function* streamChatAnswer(prompt, ctx, history = [], onProgress, o
 
 export const DASHBOARD_INSIGHT_PROMPT = [
   "[TASK:dashboard_insight]",
-  "Erstelle einen prägnanten Dashboard-Insight auf Basis des übergebenen Kontexts.",
+  "Erstelle einen prägnanten, aber tiefgehenden Dashboard-Insight auf Basis des übergebenen Kontexts.",
+  "Finde Muster, die nicht auf den ersten Blick sichtbar sind (z. B. Konsistenz, Risiko-Cluster, Fach-/Typ-Diskrepanz, Wendepunkte).",
+  "Vermeide reine Wiederholung offensichtlicher Zahlen und Labels.",
+  "Gib stattdessen Interpretation + Ursache + konkrete Folge für die nächsten 2 Wochen.",
+  "Form: 4-6 Sätze, klar und direkt, ohne Bulletpoints.",
+  "Nenne am Ende genau einen priorisierten Hebel (konkrete Handlung mit erwarteter Wirkung).",
 ].join("\n");
 
 

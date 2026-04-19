@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Generated Expo verification builds (hashed output artifacts)
+NotenPilotExpo/dist-android-check/
+NotenPilotExpo/dist-ios-check/
+NotenPilotExpo_buildcheck/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.jsxon

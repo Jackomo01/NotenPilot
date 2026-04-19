@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLS } from "../hooks/index.jsx";
-import { buildAIContext, getSuggestions, streamChatAnswer } from "../utils/ai.jsx";
+import { AI_REQUEST_COOLDOWN_MS, buildAIContext, getSuggestions, streamChatAnswer, waitForAICooldown } from "../utils/ai.jsx";
 import { consumeUserQuestionQuota, DAILY_AI_PILOT_QUESTIONS, loadUserCloudData } from "../utils/cloudData.js";
 import { C, R } from "../utils/tokens.jsx";
 
@@ -51,12 +51,14 @@ const AIMascotDrawer = memo(({
   const [iconPos, setIconPos] = useLS("np6_ai_widget_icon_pos", { x: 0, y: 0 });
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [cooldownRemainingMs, setCooldownRemainingMs] = useState(0);
   const [hasUnread, setHasUnread] = useLS("np6_ai_widget_unread", false);
   const [panelDragging, setPanelDragging] = useState(false);
   const [buttonDragging, setButtonDragging] = useState(false);
   const dragStartRef = useRef(null);
   const dragMovedRef = useRef(false);
   const listRef = useRef(null);
+  const cooldownTimerRef = useRef(null);
 
   const liveContext = useMemo(() => buildAIContext(grades, subjects), [grades, subjects]);
 
@@ -94,9 +96,19 @@ const AIMascotDrawer = memo(({
     });
   }, [messages, open]);
 
+  useEffect(() => {
+    if (!cooldownRemainingMs) return undefined;
+    cooldownTimerRef.current = window.setInterval(() => {
+      setCooldownRemainingMs((current) => Math.max(0, current - 250));
+    }, 250);
+    return () => {
+      if (cooldownTimerRef.current) window.clearInterval(cooldownTimerRef.current);
+    };
+  }, [cooldownRemainingMs]);
+
   const send = async (forcedPrompt) => {
     const prompt = String(forcedPrompt ?? input).trim();
-    if (!prompt || sending) return;
+    if (!prompt || sending || cooldownRemainingMs > 0) return;
 
     if (user?.uid && !cloudSynced) {
       setMessages((prev) => [...prev, {
@@ -146,6 +158,7 @@ const AIMascotDrawer = memo(({
 
     setSending(true);
     setInput("");
+    setCooldownRemainingMs(AI_REQUEST_COOLDOWN_MS);
 
     const userMsg = { id: `wu_${Date.now()}`, role: "user", text: prompt, ts: Date.now() };
     const assistantId = `wa_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -161,6 +174,8 @@ const AIMascotDrawer = memo(({
     };
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
+
+    await waitForAICooldown("ai-mascot");
 
     let runtimeGrades = grades;
     let runtimeSubjects = subjects;
@@ -360,6 +375,11 @@ const AIMascotDrawer = memo(({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, color: C.t0, fontWeight: 800, letterSpacing: "-0.01em" }}>Analysiere Trends, Daten und Szenarien.</div>
                 <div style={{ fontSize: 11, color: C.t1, marginTop: 2, fontWeight: 700, letterSpacing: "0.04em" }}>AI PILOT</div>
+                {cooldownRemainingMs > 0 && (
+                  <div style={{ marginTop: 6, fontSize: 10, color: C.wrn, fontWeight: 700 }}>
+                    Cooldown: {Math.ceil(cooldownRemainingMs / 1000)}s
+                  </div>
+                )}
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                   <div style={{
                     display: "inline-flex",
@@ -463,7 +483,7 @@ const AIMascotDrawer = memo(({
                   gap: 4,
                 }}>
                   <div style={{
-                    maxWidth: "85%",
+                    maxWidth: "100%",
                     padding: "8px 11px",
                     borderRadius: R.l,
                     background: m.role === "user" ? C.acc : C.bg3,
@@ -471,6 +491,7 @@ const AIMascotDrawer = memo(({
                     fontSize: 12,
                     lineHeight: 1.35,
                     whiteSpace: "pre-wrap",
+                    overflowWrap: "anywhere",
                     wordBreak: "break-word",
                   }}>
                     {m.text || (m.streaming ? "..." : "")}
@@ -511,6 +532,8 @@ const AIMascotDrawer = memo(({
                         width: "100%",
                         textAlign: "left",
                         whiteSpace: "normal",
+                        overflowWrap: "anywhere",
+                        wordBreak: "break-word",
                         lineHeight: 1.35,
                         cursor: "pointer",
                         fontFamily: "inherit",
@@ -589,15 +612,15 @@ const AIMascotDrawer = memo(({
                 />
                 <button
                   onClick={() => send()}
-                  disabled={!input.trim() || sending || questionsRemaining === 0}
+                  disabled={!input.trim() || sending || questionsRemaining === 0 || cooldownRemainingMs > 0}
                   style={{
                     width: 46,
                     height: 46,
                     borderRadius: R.l,
-                    background: !input.trim() || sending || questionsRemaining === 0 ? C.bg3 : C.acc,
+                    background: !input.trim() || sending || questionsRemaining === 0 || cooldownRemainingMs > 0 ? C.bg3 : C.acc,
                     color: C.t0,
-                    border: `1px solid ${!input.trim() || sending || questionsRemaining === 0 ? C.line : `${C.acc}66`}`,
-                    cursor: !input.trim() || sending || questionsRemaining === 0 ? "not-allowed" : "pointer",
+                    border: `1px solid ${!input.trim() || sending || questionsRemaining === 0 || cooldownRemainingMs > 0 ? C.line : `${C.acc}66`}`,
+                    cursor: !input.trim() || sending || questionsRemaining === 0 || cooldownRemainingMs > 0 ? "not-allowed" : "pointer",
                     fontSize: 16,
                     display: "grid",
                     placeItems: "center",
@@ -606,7 +629,7 @@ const AIMascotDrawer = memo(({
                     transition: "background 0.15s, border-color 0.15s, transform 0.12s",
                   }}
                 >
-                  ➤
+                  {cooldownRemainingMs > 0 ? Math.ceil(cooldownRemainingMs / 1000) : "➤"}
                 </button>
               </div>
             </div>

@@ -1,6 +1,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 
 const readEnvFile = (filePath) => {
   if (!fs.existsSync(filePath)) return {};
@@ -35,12 +36,27 @@ const env = (name, fallback = "") => {
   return fallback;
 };
 
+const parseBoolean = (value, fallback = false) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (value == null) return fallback;
+
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) return fallback;
+
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
+  return fallback;
+};
+
+const envBool = (name, fallback = false) => parseBoolean(env(name, fallback ? "true" : "false"), fallback);
+
 const PORT = Number(process.env.PORT || 8787);
 const GEMINI_API_KEY = env("GEMINI_API_KEY").trim();
 const GEMINI_BASE_URL = env("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").replace(/\/$/, "");
 const GEMINI_MODEL = env("GEMINI_MODEL", "gemini-2.0-flash").trim();
 const GEMINI_FALLBACK_MODELS_STR = env("GEMINI_FALLBACK_MODELS", "gemini-2.0-flash,gemini-1.5-flash").trim();
-const GEMINI_STRICT_VALIDATION = env("GEMINI_STRICT_VALIDATION", "false").trim().toLowerCase() === "true";
+const GEMINI_STRICT_VALIDATION = envBool("GEMINI_STRICT_VALIDATION", false);
 const GEMINI_429_COOLDOWN_MS = Number(env("GEMINI_429_COOLDOWN_MS", "300000"));
 const GEMINI_TIMEOUT_MS = Math.max(12000, Number(env("GEMINI_TIMEOUT_MS", "7000")));
 const GEMINI_FALLBACK_MODELS = GEMINI_FALLBACK_MODELS_STR.split(",")
@@ -57,9 +73,10 @@ const ROUTEWAY_API_KEY = env("ROUTEWAY_API_KEY").trim();
 const ROUTEWAY_BASE_URL = env("ROUTEWAY_BASE_URL", "https://api.routeway.ai/v1").replace(/\/$/, "");
 const ROUTEWAY_MODEL = env("ROUTEWAY_MODEL", "meta-llama/llama-3.1-70b-instruct").trim();
 const ROUTEWAY_TIMEOUT_MS = Math.max(12000, Number(env("ROUTEWAY_TIMEOUT_MS", "12000")));
-const HF_STRICT_VALIDATION = env("HF_STRICT_VALIDATION", "false").trim().toLowerCase() === "true";
-const OPENROUTER_REQUIRE_FREE_MODELS = env("OPENROUTER_REQUIRE_FREE_MODELS", "true").trim().toLowerCase() !== "false";
-const OPENROUTER_DISCOVER_MODELS = env("OPENROUTER_DISCOVER_MODELS", "true").trim().toLowerCase() !== "false";
+const HF_STRICT_VALIDATION = envBool("HF_STRICT_VALIDATION", false);
+const OPENROUTER_REQUIRE_FREE_MODELS = envBool("OPENROUTER_REQUIRE_FREE_MODELS", true);
+const OPENROUTER_DISCOVER_MODELS = envBool("OPENROUTER_DISCOVER_MODELS", true);
+const OPENROUTER_NO_RULES = envBool("OPENROUTER_NO_RULES", false);
 const OPENROUTER_MODELS_CACHE_MS = Math.max(30000, Number(env("OPENROUTER_MODELS_CACHE_MS", "600000")));
 const OPENROUTER_FREE_ROUTER_ID = "openrouter/free";
 const isFreeModel = (model) => {
@@ -69,6 +86,8 @@ const isFreeModel = (model) => {
 const isAllowedOpenRouterModel = (model) => {
   const value = String(model || "").trim().toLowerCase();
   if (!value) return false;
+
+  if (OPENROUTER_NO_RULES) return value.includes("/");
 
   // Legacy placeholder that triggers OpenRouter HTTP 400.
   if (value === "openrouter/openrouter-free") return false;
@@ -83,18 +102,252 @@ const OPENROUTER_FALLBACK_MODELS = OPENROUTER_FALLBACK_MODELS_STR.split(",")
   .map((m) => m.trim())
   .filter(Boolean)
   .filter(isAllowedOpenRouterModel);
-const HF_FALLBACK_ENABLED = env("HF_FALLBACK_ENABLED", "true").trim().toLowerCase() !== "false";
-const AI_SAFE_FALLBACK_ENABLED = env("AI_SAFE_FALLBACK_ENABLED", "false").trim().toLowerCase() === "true";
-const AI_ONLY_MODE = env("AI_ONLY_MODE", "true").trim().toLowerCase() !== "false";
-const AI_DETERMINISTIC_ENABLED = env("AI_DETERMINISTIC_ENABLED", "false").trim().toLowerCase() === "true";
+const HF_FALLBACK_ENABLED = envBool("HF_FALLBACK_ENABLED", true);
+const AI_SAFE_FALLBACK_ENABLED = envBool("AI_SAFE_FALLBACK_ENABLED", false);
+const AI_ONLY_MODE = envBool("AI_ONLY_MODE", true);
+const AI_FORCE_OPENROUTER_ONLY = envBool("AI_FORCE_OPENROUTER_ONLY", false);
+const AI_STRICT_OPENROUTER_ONLY = envBool("AI_STRICT_OPENROUTER_ONLY", true);
+const AI_DETERMINISTIC_ENABLED = envBool("AI_DETERMINISTIC_ENABLED", false);
 const APP_TITLE = env("OPENROUTER_APP_TITLE", "NotenPilot").trim();
 const HTTP_REFERER = env("OPENROUTER_HTTP_REFERER", "http://localhost:5173").trim();
-let geminiBackoffUntilTs = 0;
 let hasLoggedUnknownResponseShape = false;
 const invalidOpenRouterModels = new Set();
 let openRouterModelsCache = {
   fetchedAt: 0,
   ids: null,
+};
+
+// OpenRouter credit/rate-limit monitoring
+let openRouterKeyInfoCache = {
+  fetchedAt: 0,
+  data: null,
+};
+const OPENROUTER_KEY_INFO_CACHE_MS = 60000; // Refresh every 60 seconds
+const OPENROUTER_CREDIT_WARNING_THRESHOLD = 5; // Warn if < 5 credits remain
+
+const toNullableNumber = (value) => {
+  if (value == null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+};
+
+const toNumberDefault = (value, fallback = 0) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+const toBooleanDefault = (value, fallback = false) => {
+  if (typeof value === "boolean") return value;
+  if (value == null) return fallback;
+  return parseBoolean(value, fallback);
+};
+
+const fetchOpenRouterKeyInfo = async () => {
+  if (!OPENROUTER_API_KEY) return null;
+
+  const now = Date.now();
+  if (openRouterKeyInfoCache.data && now - openRouterKeyInfoCache.fetchedAt < OPENROUTER_KEY_INFO_CACHE_MS) {
+    return openRouterKeyInfoCache.data;
+  }
+
+  try {
+    const res = await withTimeout(
+      fetch(`${OPENROUTER_BASE_URL}/key`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        },
+      }),
+      Math.min(OPENROUTER_TIMEOUT_MS, 10000)
+    );
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`OpenRouter key info HTTP ${res.status}: ${errText.slice(0, 200)}`);
+    }
+
+    const keyData = await res.json();
+    const info = keyData?.data || {};
+
+    const keyLog = {
+      data: {
+        label: String(info.label || ""),
+        limit: toNullableNumber(info.limit),
+        limit_reset: info.limit_reset == null ? null : String(info.limit_reset),
+        limit_remaining: toNullableNumber(info.limit_remaining),
+        include_byok_in_limit: toBooleanDefault(info.include_byok_in_limit, false),
+        usage: toNumberDefault(info.usage, 0),
+        usage_daily: toNumberDefault(info.usage_daily, 0),
+        usage_weekly: toNumberDefault(info.usage_weekly, 0),
+        usage_monthly: toNumberDefault(info.usage_monthly, 0),
+        byok_usage: toNumberDefault(info.byok_usage, 0),
+        byok_usage_daily: toNumberDefault(info.byok_usage_daily, 0),
+        byok_usage_weekly: toNumberDefault(info.byok_usage_weekly, 0),
+        byok_usage_monthly: toNumberDefault(info.byok_usage_monthly, 0),
+        is_free_tier: toBooleanDefault(info.is_free_tier, false),
+      },
+    };
+
+    console.log(`[OpenRouter KEY] ${JSON.stringify(keyLog)}`);
+
+    openRouterKeyInfoCache = {
+      fetchedAt: now,
+      data: info,
+    };
+
+    // Log warnings if approaching limits
+    if (info.limit_remaining != null && info.limit_remaining < OPENROUTER_CREDIT_WARNING_THRESHOLD) {
+      console.warn(`[OpenRouter CREDITS] Only ${info.limit_remaining} credits remaining.`);
+    }
+    if (info.usage_daily != null && info.limit != null) {
+      const dailyPercent = Math.round((info.usage_daily / (info.limit / 30)) * 100);
+      if (dailyPercent > 80) {
+        console.warn(`[OpenRouter DAILY] ${dailyPercent}% of daily quota used.`);
+      }
+    }
+
+    return info;
+  } catch (err) {
+    console.warn(`[OpenRouter KEY INFO] Failed to fetch: ${String(err?.message || err)}.`);
+    return null;
+  }
+};
+
+const shouldSkipOpenRouterDueToLimits = async () => {
+  const info = await fetchOpenRouterKeyInfo();
+  if (!info) return false;
+
+  // Skip if negative balance
+  if (info.limit != null && info.limit_remaining != null && info.limit_remaining < 0) {
+    console.warn(`[OpenRouter LIMITS] Negative balance detected (${info.limit_remaining}). Skipping OpenRouter.`);
+    return true;
+  }
+
+  // Skip if no credits left
+  if (info.limit_remaining === 0) {
+    console.warn(`[OpenRouter LIMITS] Zero credits remaining. Skipping OpenRouter.`);
+    return true;
+  }
+
+  return false;
+};
+
+const inflightAiRequests = new Map();
+const recentSuccessfulAiResponses = new Map();
+const RECENT_SUCCESS_TTL_MS = 5 * 60 * 1000;
+
+// Per-model rate-limit backoff tracking
+const modelBackoffUntilTs = new Map(); // Key: "provider:model", Value: timestamp when backoff expires
+const RATE_LIMIT_BACKOFF_MS = 45000; // 45 seconds cooldown after 429
+
+const getModelKey = (provider, model) => `${String(provider || "unknown").toLowerCase()}:${String(model || "unknown").toLowerCase()}`;
+
+const isModelInBackoff = (provider, model) => {
+  const key = getModelKey(provider, model);
+  const backoffUntil = modelBackoffUntilTs.get(key);
+  if (!backoffUntil) return false;
+  if (Date.now() >= backoffUntil) {
+    modelBackoffUntilTs.delete(key);
+    return false;
+  }
+  return true;
+};
+
+const setModelBackoff = (provider, model, durationMs = RATE_LIMIT_BACKOFF_MS) => {
+  const key = getModelKey(provider, model);
+  const backoffUntil = Date.now() + durationMs;
+  modelBackoffUntilTs.set(key, backoffUntil);
+  const waitSec = Math.ceil(durationMs / 1000);
+  console.warn(`[AI BACKOFF] ${provider}/${model} set to cooldown for ${waitSec}s (until ${new Date(backoffUntil).toISOString()}).`);
+};
+
+const getRemainingBackoffSec = (provider, model) => {
+  const key = getModelKey(provider, model);
+  const backoffUntil = modelBackoffUntilTs.get(key);
+  if (!backoffUntil) return 0;
+  const remaining = Math.max(0, backoffUntil - Date.now());
+  return Math.ceil(remaining / 1000);
+};
+
+// Global request throttling to prevent burst traffic causing 429 errors
+const MAX_CONCURRENT_REQUESTS = 1; // Only 1 concurrent request to providers
+const MIN_REQUEST_DELAY_MS = 1200; // 1.2 seconds minimum between requests
+let ongoingRequestCount = 0;
+let lastRequestCompletedAt = Date.now();
+const requestQueueWaiters = [];
+
+const acquireThrottleSlot = () => {
+  return new Promise((resolve) => {
+    const tryAcquire = () => {
+      const now = Date.now();
+      const timeSinceLastRequest = now - lastRequestCompletedAt;
+      const canProceed = 
+        ongoingRequestCount < MAX_CONCURRENT_REQUESTS && 
+        timeSinceLastRequest >= MIN_REQUEST_DELAY_MS;
+
+      if (canProceed) {
+        ongoingRequestCount += 1;
+        resolve();
+      } else {
+        const delay = Math.max(100, MIN_REQUEST_DELAY_MS - timeSinceLastRequest);
+        const timer = setTimeout(tryAcquire, delay);
+        requestQueueWaiters.push(timer);
+      }
+    };
+    tryAcquire();
+  });
+};
+
+const releaseThrottleSlot = () => {
+  lastRequestCompletedAt = Date.now();
+  ongoingRequestCount = Math.max(0, ongoingRequestCount - 1);
+  // Clear any pending waiter timers
+  const timer = requestQueueWaiters.shift();
+  if (timer) clearTimeout(timer);
+};
+
+const withThrottle = async (fn) => {
+  await acquireThrottleSlot();
+  try {
+    return await fn();
+  } finally {
+    releaseThrottleSlot();
+  }
+};
+
+// Background task: refresh OpenRouter key info periodically
+setInterval(async () => {
+  try {
+    await fetchOpenRouterKeyInfo();
+  } catch (err) {
+    console.warn(`[OpenRouter BG] Periodic key check failed: ${String(err?.message || err).slice(0, 100)}.`);
+  }
+}, 5 * 60 * 1000); // Every 5 minutes
+
+const buildRequestKey = ({ mode, prompt, context, history, openrouterOnly }) => {
+  const payload = {
+    mode,
+    prompt: String(prompt || ""),
+    context,
+    history: Array.isArray(history) ? history : [],
+    openrouterOnly: Boolean(openrouterOnly),
+  };
+  return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+};
+
+const getRecentSuccess = (requestKey) => {
+  const item = recentSuccessfulAiResponses.get(requestKey);
+  if (!item) return null;
+  if (Date.now() - item.ts > RECENT_SUCCESS_TTL_MS) {
+    recentSuccessfulAiResponses.delete(requestKey);
+    return null;
+  }
+  return item.result;
+};
+
+const setRecentSuccess = (requestKey, result) => {
+  if (!String(result?.answer || "").trim()) return;
+  recentSuccessfulAiResponses.set(requestKey, { ts: Date.now(), result });
 };
 
 if (!isAllowedOpenRouterModel(OPENROUTER_MODEL)) {
@@ -1561,6 +1814,16 @@ const extractAnswerText = (data) => {
   const fromMessage = contentToText(choice?.message?.content);
   if (fromMessage) return fromMessage;
 
+  const fromReasoning = contentToText(choice?.message?.reasoning);
+  if (fromReasoning) return fromReasoning;
+
+  const fromReasoningDetails = contentToText(
+    Array.isArray(choice?.message?.reasoning_details)
+      ? choice.message.reasoning_details.map((item) => item?.text).filter(Boolean)
+      : null
+  );
+  if (fromReasoningDetails) return fromReasoningDetails;
+
   const fromText = contentToText(choice?.text);
   if (fromText) return fromText;
 
@@ -1658,6 +1921,11 @@ const callGeminiOnce = async ({ prompt, context, history, mode, model = GEMINI_M
     throw new Error("GEMINI_API_KEY fehlt. Gemini kann nicht genutzt werden.");
   }
 
+  if (isModelInBackoff("gemini", model)) {
+    const remainSec = getRemainingBackoffSec("gemini", model);
+    throw new Error(`Gemini ${model} ist noch im Cooldown (${remainSec}s verbleibend).`);
+  }
+
   const requestGemini = async (repair = false) => {
     const url = `${GEMINI_BASE_URL}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
     const res = await fetch(url, {
@@ -1670,7 +1938,11 @@ const callGeminiOnce = async ({ prompt, context, history, mode, model = GEMINI_M
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      throw new Error(`Gemini HTTP ${res.status}: ${errText.slice(0, 300)}`);
+      const httpCode = res.status;
+      if (httpCode === 429) {
+        setModelBackoff("gemini", model);
+      }
+      throw new Error(`Gemini HTTP ${httpCode}: ${errText.slice(0, 300)}`);
     }
 
     const data = await res.json();
@@ -1712,13 +1984,18 @@ const callGeminiOnce = async ({ prompt, context, history, mode, model = GEMINI_M
   return { answer, raw: data, model, provider: "gemini-api" };
 };
 
-const callOpenRouterOnce = async ({ prompt, context, history, mode, model }) => {
+const callOpenRouterOnce = async ({ prompt, context, history, mode, model, lenient = false }) => {
   if (!OPENROUTER_API_KEY) {
     throw new Error("OPENROUTER_API_KEY fehlt. Bitte als Umgebungsvariable setzen.");
   }
 
-  if (!isAllowedOpenRouterModel(model)) {
+  if (!OPENROUTER_NO_RULES && !isAllowedOpenRouterModel(model)) {
     throw new Error(`Nicht erlaubt: ${model}. Erlaubt sind nur definierte OpenRouter-Modelle.`);
+  }
+
+  if (isModelInBackoff("openrouter", model)) {
+    const remainSec = getRemainingBackoffSec("openrouter", model);
+    throw new Error(`OpenRouter ${model} ist noch im Cooldown (${remainSec}s verbleibend).`);
   }
 
   const requestedModel = String(model || "").trim().toLowerCase();
@@ -1754,7 +2031,11 @@ const callOpenRouterOnce = async ({ prompt, context, history, mode, model }) => 
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      throw new Error(`OpenRouter HTTP ${res.status}: ${errText.slice(0, 300)}`);
+      const httpCode = res.status;
+      if (httpCode === 429) {
+        setModelBackoff("openrouter", model);
+      }
+      throw new Error(`OpenRouter HTTP ${httpCode}: ${errText.slice(0, 300)}`);
     }
 
     const data = await res.json();
@@ -1802,20 +2083,30 @@ const callOpenRouterOnce = async ({ prompt, context, history, mode, model }) => 
     answer = repaired.answer;
   }
 
+  if (looksEnglish(answer)) {
+    const repaired = await requestOpenRouter(buildRepairMessages({ prompt, context, history }));
+    data = repaired.data;
+    answer = repaired.answer;
+  }
+
   if (!String(answer || "").trim()) {
     throw new Error("OpenRouter lieferte keine verwertbare Textantwort.");
   }
-  if (looksEnglish(answer)) {
-    throw new Error("OpenRouter lieferte keine deutsche Antwort.");
-  }
-  if (isFalseNoDataClaim(answer, context)) {
-    throw new Error("OpenRouter behauptet fehlende Daten trotz vorhandenem Kontext.");
-  }
-  if (isUngroundedAnswer({ prompt, answer, context })) {
-    throw new Error("OpenRouter lieferte eine nicht datentreue Antwort.");
-  }
-  if (isBrokenAnswer(answer)) {
-    throw new Error("OpenRouter lieferte eine unvollständige Antwort.");
+  const skipOpenRouterRules = OPENROUTER_NO_RULES || lenient;
+
+  if (!skipOpenRouterRules) {
+    if (looksEnglish(answer)) {
+      throw new Error("OpenRouter lieferte keine deutsche Antwort.");
+    }
+    if (isFalseNoDataClaim(answer, context)) {
+      throw new Error("OpenRouter behauptet fehlende Daten trotz vorhandenem Kontext.");
+    }
+    if (isUngroundedAnswer({ prompt, answer, context })) {
+      throw new Error("OpenRouter lieferte eine nicht datentreue Antwort.");
+    }
+    if (isBrokenAnswer(answer)) {
+      throw new Error("OpenRouter lieferte eine unvollständige Antwort.");
+    }
   }
   return { answer, raw: data, model };
 };
@@ -1823,6 +2114,11 @@ const callOpenRouterOnce = async ({ prompt, context, history, mode, model }) => 
 const callRoutewayOnce = async ({ prompt, context, history, mode }) => {
   if (!ROUTEWAY_API_KEY) {
     throw new Error("ROUTEWAY_API_KEY fehlt. Routeway kann nicht genutzt werden.");
+  }
+
+  if (isModelInBackoff("routeway", ROUTEWAY_MODEL)) {
+    const remainSec = getRemainingBackoffSec("routeway", ROUTEWAY_MODEL);
+    throw new Error(`Routeway ${ROUTEWAY_MODEL} ist noch im Cooldown (${remainSec}s verbleibend).`);
   }
 
   const requestRouteway = async (messages) => {
@@ -1843,7 +2139,11 @@ const callRoutewayOnce = async ({ prompt, context, history, mode }) => {
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      throw new Error(`Routeway HTTP ${res.status}: ${errText.slice(0, 300)}`);
+      const httpCode = res.status;
+      if (httpCode === 429) {
+        setModelBackoff("routeway", ROUTEWAY_MODEL);
+      }
+      throw new Error(`Routeway HTTP ${httpCode}: ${errText.slice(0, 300)}`);
     }
 
     const data = await res.json();
@@ -1879,6 +2179,11 @@ const callHuggingFaceOnce = async ({ prompt, context, history, mode }) => {
     throw new Error("HF_TOKEN fehlt. HuggingFace-Fallback kann nicht genutzt werden.");
   }
 
+  if (isModelInBackoff("huggingface", HF_MODEL)) {
+    const remainSec = getRemainingBackoffSec("huggingface", HF_MODEL);
+    throw new Error(`HuggingFace ${HF_MODEL} ist noch im Cooldown (${remainSec}s verbleibend).`);
+  }
+
   const requestHuggingFace = async (messages) => {
     const res = await fetch(`${HF_BASE_URL}/chat/completions`, {
       method: "POST",
@@ -1897,7 +2202,11 @@ const callHuggingFaceOnce = async ({ prompt, context, history, mode }) => {
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      throw new Error(`HuggingFace HTTP ${res.status}: ${errText.slice(0, 300)}`);
+      const httpCode = res.status;
+      if (httpCode === 429) {
+        setModelBackoff("huggingface", HF_MODEL);
+      }
+      throw new Error(`HuggingFace HTTP ${httpCode}: ${errText.slice(0, 300)}`);
     }
 
     const data = await res.json();
@@ -2109,75 +2418,227 @@ const localFallbackAnswer = ({ prompt, context }) => {
   return "Zu wenige Notendaten für eine Bewertung.";
 };
 
-const callOpenRouter = async ({ prompt, context, history, mode }) => {
+const extractTokenCount = (raw) => {
+  const usage = raw?.usage || {};
+  const candidates = [
+    usage.total_tokens,
+    usage.totalTokens,
+    usage.completion_tokens,
+    usage.output_tokens,
+    raw?.total_tokens,
+  ];
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return null;
+};
+
+const isValidCollectedAnswer = (answer) => {
+  const text = String(answer || "").trim();
+  if (!text) return false;
+  if (isBrokenAnswer(text)) return false;
+  return true;
+};
+
+const scoreCollectedCandidate = ({ answer, provider, latencyMs, orderIndex, raw }) => {
+  const text = String(answer || "").trim();
+  const len = text.length;
+
+  let qualityScore = Math.min(2.5, len / 180);
+  if (/[.!?]\s*$/.test(text)) qualityScore += 0.25;
+  if (isLikelyTruncated(raw, text)) qualityScore -= 0.8;
+
+  const providerTrust = {
+    "openrouter-proxy": 1.15,
+    "huggingface-router": 1.0,
+    routeway: 0.95,
+    "gemini-api": 0.9,
+  };
+  const trustScore = providerTrust[String(provider || "").toLowerCase()] ?? 0.8;
+
+  const latencyPenalty = Math.min(1.4, Math.max(0, Number(latencyMs || 0)) / 12000);
+  const fallbackBonus = Math.max(0, Number(orderIndex || 0)) * 0.08;
+
+  return qualityScore + trustScore + fallbackBonus - latencyPenalty;
+};
+
+const createResponseCollector = () => {
+  const responses = [];
+
+  return {
+    addSuccess({ provider, model, text, raw, latencyMs, orderIndex }) {
+      const entry = {
+        model: String(model || "unknown"),
+        provider: String(provider || "unknown"),
+        text: String(text || ""),
+        raw,
+        timestamp: new Date().toISOString(),
+        latency: Number.isFinite(Number(latencyMs)) ? Number(latencyMs) : null,
+        tokens: extractTokenCount(raw),
+        status: "success",
+        score: scoreCollectedCandidate({ answer: text, provider, latencyMs, orderIndex, raw }),
+      };
+      responses.push(entry);
+      return entry;
+    },
+    addError({ provider, model, error, raw, latencyMs }) {
+      responses.push({
+        model: String(model || "unknown"),
+        provider: String(provider || "unknown"),
+        text: "",
+        raw,
+        timestamp: new Date().toISOString(),
+        latency: Number.isFinite(Number(latencyMs)) ? Number(latencyMs) : null,
+        tokens: null,
+        status: "error",
+        error: String(error || "unknown"),
+      });
+    },
+    list() {
+      return responses;
+    },
+    hasSuccess() {
+      return responses.some((r) => r.status === "success" && String(r.text || "").trim());
+    },
+    bestSuccess() {
+      const successes = responses.filter((r) => r.status === "success" && String(r.text || "").trim());
+      if (!successes.length) return null;
+      successes.sort((a, b) => {
+        const diff = Number(b.score || 0) - Number(a.score || 0);
+        if (diff !== 0) return diff;
+        return String(a.timestamp).localeCompare(String(b.timestamp));
+      });
+      return successes[0];
+    },
+  };
+};
+
+const callOpenRouter = async ({ prompt, context, history, mode, openrouterOnly = false }) => {
   const safeContext = ensureFirestoreSnapshot(context);
+  const openrouterOnlyMode = AI_FORCE_OPENROUTER_ONLY || openrouterOnly;
+  const collector = createResponseCollector();
 
   const buildNoSafeFallbackResult = (reason) => {
     return {
       answer: "AI aktuell nicht verfügbar. Versuch’s gleich nochmal.",
-      raw: { unavailable: true, reason: String(reason || "unknown") },
+      raw: {
+        unavailable: true,
+        reason: String(reason || "unknown"),
+        responses: collector.list(),
+      },
       model: "error",
       provider: "error",
     };
   };
 
-  const nowTs = Date.now();
-  const geminiInBackoff = geminiBackoffUntilTs > nowTs;
+  const buildSelectedResult = (fallbackReason = "selected") => {
+    const best = collector.bestSuccess();
+    if (!best) return null;
 
+    const baseRaw = best.raw && typeof best.raw === "object"
+      ? { ...best.raw }
+      : { upstreamRaw: best.raw };
+
+    return {
+      answer: best.text,
+      provider: best.provider,
+      model: best.model,
+      raw: {
+        ...baseRaw,
+        collector: {
+          reason: fallbackReason,
+          selected: {
+            provider: best.provider,
+            model: best.model,
+            score: best.score,
+          },
+          responses: collector.list(),
+        },
+      },
+    };
+  };
+
+  const maybeReturnCollected = (reason) => {
+    if (!collector.hasSuccess()) return null;
+    const selected = buildSelectedResult(reason);
+    if (selected) {
+      console.log(`[AI ROUTING] Returning best collected response (${selected.provider}/${selected.model}).`);
+      return selected;
+    }
+    return null;
+  };
+
+  const nowTs = Date.now();
   const errors = [];
 
-  // 1) Primary provider: HuggingFace
-  const canUseHf = HF_FALLBACK_ENABLED && !!HF_TOKEN;
-  if (canUseHf && shouldFallbackToHuggingFace()) {
-    console.log(`[AI ROUTING] Trying HuggingFace (${HF_MODEL})...`);
-    try {
-      const hf = await withTimeoutRetry(
-        "HuggingFace",
-        () => callHuggingFaceOnce({ prompt, context: safeContext, history, mode }),
-        HF_TIMEOUT_MS
-      );
-      if (String(hf?.answer || "").trim()) {
-        console.log(`[AI ROUTING] HuggingFace succeeded.`);
-        return hf;
+  if (!openrouterOnlyMode) {
+    // 1) Primary provider: HuggingFace
+    const canUseHf = HF_FALLBACK_ENABLED && !!HF_TOKEN;
+    if (canUseHf && shouldFallbackToHuggingFace()) {
+      console.log(`[AI ROUTING] Trying HuggingFace (${HF_MODEL})...`);
+      const startedAt = Date.now();
+      try {
+        const hf = await withThrottle(() => withTimeoutRetry(
+          "HuggingFace",
+          () => callHuggingFaceOnce({ prompt, context: safeContext, history, mode }),
+          HF_TIMEOUT_MS
+        ));
+        const latencyMs = Date.now() - startedAt;
+        if (isValidCollectedAnswer(hf?.answer)) {
+          collector.addSuccess({
+            provider: hf?.provider || "huggingface-router",
+            model: hf?.model || HF_MODEL,
+            text: hf.answer,
+            raw: hf.raw,
+            latencyMs,
+            orderIndex: 0,
+          });
+          console.log(`[AI ROUTING] HuggingFace succeeded.`);
+          const selected = maybeReturnCollected("hf-success");
+          if (selected) return selected;
+        }
+        collector.addError({
+          provider: "huggingface-router",
+          model: HF_MODEL,
+          error: "empty answer",
+          raw: hf?.raw,
+          latencyMs,
+        });
+        errors.push("huggingface: empty answer");
+      } catch (err) {
+        const latencyMs = Date.now() - startedAt;
+        const msg = String(err?.message || err || "unknown");
+        collector.addError({
+          provider: "huggingface-router",
+          model: HF_MODEL,
+          error: msg,
+          latencyMs,
+        });
+        console.warn(`[AI ROUTING] HuggingFace failed -> fallback OpenRouter (${msg})`);
+        errors.push(`huggingface: ${msg}`);
       }
-      errors.push("huggingface: empty answer");
-    } catch (err) {
-      const msg = String(err?.message || err || "unknown");
-      console.warn(`[AI ROUTING] HuggingFace failed -> fallback Routeway (${msg})`);
-      errors.push(`huggingface: ${msg}`);
     }
   }
 
-  // 2) Fallback provider: Routeway
-  if (ROUTEWAY_API_KEY) {
-    console.log(`[AI ROUTING] Trying Routeway (${ROUTEWAY_MODEL})...`);
+  // 2) Next provider: OpenRouter (with credit/rate-limit check)
+  const skipOpenRouterDueToLimits = !openrouterOnlyMode && (await shouldSkipOpenRouterDueToLimits());
+  if (skipOpenRouterDueToLimits) {
+    console.warn(`[AI ROUTING] OpenRouter skipped due to rate/credit limits. Using fallback.`);
+    errors.push("openrouter: rate limit / credit limit");
+  } else {
     try {
-      const routeway = await withTimeoutRetry(
-        "Routeway",
-        () => callRoutewayOnce({ prompt, context: safeContext, history, mode }),
-        ROUTEWAY_TIMEOUT_MS
-      );
-      if (String(routeway?.answer || "").trim()) {
-        console.log(`[AI ROUTING] Routeway succeeded.`);
-        return routeway;
-      }
-      errors.push("routeway: empty answer");
-    } catch (err) {
-      const msg = String(err?.message || err || "unknown");
-      console.warn(`[AI ROUTING] Routeway failed -> fallback OpenRouter (${msg})`);
-      errors.push(`routeway: ${msg}`);
-    }
-  }
-
-  // 3) Next provider: OpenRouter
-  try {
-    const openrouter = await withTimeoutRetry(
-      "OpenRouter",
-      async () => {
-        const modelCandidates = [OPENROUTER_MODEL, ...OPENROUTER_FALLBACK_MODELS]
+      const openrouter = await withThrottle(() => withTimeoutRetry(
+        "OpenRouter",
+        async () => {
+        const modelCandidates = (openrouterOnlyMode
+          ? [OPENROUTER_MODEL, ...OPENROUTER_FALLBACK_MODELS]
+          : [OPENROUTER_MODEL, ...OPENROUTER_FALLBACK_MODELS])
           .map((m) => String(m || "").trim());
 
-        const resolvedCandidates = await resolveOpenRouterModelCandidates(modelCandidates);
+        const resolvedCandidates = openrouterOnlyMode
+          ? modelCandidates.filter(isAllowedOpenRouterModel)
+          : await resolveOpenRouterModelCandidates(modelCandidates);
 
         if (!resolvedCandidates.length) {
           throw new Error("No valid OpenRouter model IDs configured.");
@@ -2186,6 +2647,7 @@ const callOpenRouter = async ({ prompt, context, history, mode }) => {
         let lastError = new Error("OpenRouter lieferte keine verwertbare Textantwort.");
         for (const modelCandidate of resolvedCandidates) {
           console.log(`[AI ROUTING] Trying OpenRouter (${modelCandidate})...`);
+          const startedAt = Date.now();
           try {
             const candidateResult = await callOpenRouterOnce({
               prompt,
@@ -2193,84 +2655,198 @@ const callOpenRouter = async ({ prompt, context, history, mode }) => {
               history,
               mode,
               model: modelCandidate,
+              lenient: openrouterOnlyMode,
             });
-            if (String(candidateResult?.answer || "").trim()) {
+            const latencyMs = Date.now() - startedAt;
+            if (isValidCollectedAnswer(candidateResult?.answer)) {
+              collector.addSuccess({
+                provider: "openrouter-proxy",
+                model: candidateResult?.model || modelCandidate,
+                text: candidateResult.answer,
+                raw: candidateResult.raw,
+                latencyMs,
+                orderIndex: 1,
+              });
               return { ...candidateResult, provider: "openrouter-proxy" };
             }
+            collector.addError({
+              provider: "openrouter-proxy",
+              model: modelCandidate,
+              error: "empty answer",
+              raw: candidateResult?.raw,
+              latencyMs,
+            });
             lastError = new Error(`OpenRouter Modell ${modelCandidate} lieferte keine verwertbare Textantwort.`);
           } catch (err) {
+            const latencyMs = Date.now() - startedAt;
             const msg = String(err?.message || err || "").toLowerCase();
             if (msg.includes("not a valid model id")) {
               invalidOpenRouterModels.add(String(modelCandidate || "").toLowerCase());
               console.warn(`[AI ROUTING] OpenRouter invalid model cached: ${modelCandidate}`);
             }
+            collector.addError({
+              provider: "openrouter-proxy",
+              model: modelCandidate,
+              error: String(err?.message || err || "unknown"),
+              latencyMs,
+            });
             lastError = err;
           }
         }
         throw lastError;
       },
       OPENROUTER_TIMEOUT_MS
-    );
+    ));
     if (String(openrouter?.answer || "").trim()) {
       console.log(`[AI ROUTING] OpenRouter succeeded.`);
-      return openrouter;
+      const selected = maybeReturnCollected("openrouter-success");
+      if (selected) return selected;
     }
     errors.push("openrouter: empty answer");
   } catch (err) {
     const msg = String(err?.message || err || "unknown");
-    console.warn(`[AI ROUTING] OpenRouter failed -> fallback Gemini (${msg})`);
-    errors.push(`openrouter: ${msg}`);
+    if (openrouterOnlyMode) {
+      console.warn(`[AI ROUTING] OpenRouter failed (OpenRouter-only mode) (${msg})`);
+      if (AI_STRICT_OPENROUTER_ONLY) {
+        errors.push(`openrouter: ${msg}`);
+      }
+    } else {
+      console.warn(`[AI ROUTING] OpenRouter failed -> fallback Routeway (${msg})`);
+      errors.push(`openrouter: ${msg}`);
+    }
+    }
   }
 
-  // 4) Last provider: Gemini (if configured and not in cooldown)
-  if (GEMINI_API_KEY && !geminiInBackoff) {
-    const geminiCandidates = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS]
-      .map((m) => String(m || "").trim())
-      .filter(Boolean)
-      .filter((m, i, arr) => arr.indexOf(m) === i);
-    try {
-      let lastGeminiError = new Error("Gemini lieferte keine verwertbare Textantwort.");
-      for (const geminiCandidate of geminiCandidates) {
-        console.log(`[AI ROUTING] Trying Gemini (${geminiCandidate})...`);
-        try {
-          const gemini = await withTimeoutRetry(
-            "Gemini",
-            () => callGeminiOnce({
-              prompt,
-              context: safeContext,
-              history,
-              mode,
-              model: geminiCandidate,
-            }),
-            GEMINI_TIMEOUT_MS
-          );
-          if (String(gemini?.answer || "").trim()) {
-            console.log(`[AI ROUTING] Gemini succeeded.`);
-            return gemini;
-          }
-          lastGeminiError = new Error(`Gemini Modell ${geminiCandidate} lieferte keine verwertbare Textantwort.`);
-        } catch (err) {
-          const msg = String(err?.message || err || "unknown");
-          if (msg.includes("Gemini HTTP 429")) {
-            geminiBackoffUntilTs = Date.now() + Math.max(0, GEMINI_429_COOLDOWN_MS || 0);
-          }
-          lastGeminiError = err;
+  if (!openrouterOnlyMode) {
+    // 3) Fallback provider: Routeway
+    if (ROUTEWAY_API_KEY) {
+      console.log(`[AI ROUTING] Trying Routeway (${ROUTEWAY_MODEL})...`);
+      const startedAt = Date.now();
+      try {
+        const routeway = await withThrottle(() => withTimeoutRetry(
+          "Routeway",
+          () => callRoutewayOnce({ prompt, context: safeContext, history, mode }),
+          ROUTEWAY_TIMEOUT_MS
+        ));
+        const latencyMs = Date.now() - startedAt;
+        if (isValidCollectedAnswer(routeway?.answer)) {
+          collector.addSuccess({
+            provider: routeway?.provider || "routeway",
+            model: routeway?.model || ROUTEWAY_MODEL,
+            text: routeway.answer,
+            raw: routeway.raw,
+            latencyMs,
+            orderIndex: 2,
+          });
+          console.log(`[AI ROUTING] Routeway succeeded.`);
+          const selected = maybeReturnCollected("routeway-success");
+          if (selected) return selected;
         }
+        collector.addError({
+          provider: "routeway",
+          model: ROUTEWAY_MODEL,
+          error: "empty answer",
+          raw: routeway?.raw,
+          latencyMs,
+        });
+        errors.push("routeway: empty answer");
+      } catch (err) {
+        const latencyMs = Date.now() - startedAt;
+        const msg = String(err?.message || err || "unknown");
+        collector.addError({
+          provider: "routeway",
+          model: ROUTEWAY_MODEL,
+          error: msg,
+          latencyMs,
+        });
+        console.warn(`[AI ROUTING] Routeway failed -> fallback Gemini (${msg})`);
+        errors.push(`routeway: ${msg}`);
       }
-      throw lastGeminiError;
-    } catch (err) {
-      const msg = String(err?.message || err || "unknown");
-      if (msg.includes("Gemini HTTP 429")) {
-        geminiBackoffUntilTs = Date.now() + Math.max(0, GEMINI_429_COOLDOWN_MS || 0);
-      }
-      console.warn(`[AI ROUTING] Gemini failed -> no provider left (${msg})`);
-      errors.push(`gemini: ${msg}`);
     }
-  } else if (GEMINI_API_KEY && geminiInBackoff) {
-    const waitSec = Math.max(1, Math.ceil((geminiBackoffUntilTs - nowTs) / 1000));
-    console.warn(`[AI ROUTING] Gemini skipped (429 cooldown ${waitSec}s).`);
-    errors.push(`gemini: cooldown ${waitSec}s`);
+
+    // 4) Last provider: Gemini (if configured and not in cooldown)
+    if (GEMINI_API_KEY && !geminiInBackoff) {
+      const geminiCandidates = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS]
+        .map((m) => String(m || "").trim())
+        .filter(Boolean)
+        .filter((m, i, arr) => arr.indexOf(m) === i);
+      try {
+        let lastGeminiError = new Error("Gemini lieferte keine verwertbare Textantwort.");
+        for (const geminiCandidate of geminiCandidates) {
+          console.log(`[AI ROUTING] Trying Gemini (${geminiCandidate})...`);
+          const startedAt = Date.now();
+          try {
+            const gemini = await withThrottle(() => withTimeoutRetry(
+              "Gemini",
+              () => callGeminiOnce({
+                prompt,
+                context: safeContext,
+                history,
+                mode,
+                model: geminiCandidate,
+              }),
+              GEMINI_TIMEOUT_MS
+            ));
+            const latencyMs = Date.now() - startedAt;
+            if (isValidCollectedAnswer(gemini?.answer)) {
+              collector.addSuccess({
+                provider: gemini?.provider || "gemini-api",
+                model: gemini?.model || geminiCandidate,
+                text: gemini.answer,
+                raw: gemini.raw,
+                latencyMs,
+                orderIndex: 3,
+              });
+              console.log(`[AI ROUTING] Gemini succeeded.`);
+              const selected = maybeReturnCollected("gemini-success");
+              if (selected) return selected;
+            }
+            collector.addError({
+              provider: "gemini-api",
+              model: geminiCandidate,
+              error: "empty answer",
+              raw: gemini?.raw,
+              latencyMs,
+            });
+            lastGeminiError = new Error(`Gemini Modell ${geminiCandidate} lieferte keine verwertbare Textantwort.`);
+          } catch (err) {
+            const latencyMs = Date.now() - startedAt;
+            const msg = String(err?.message || err || "unknown");
+            collector.addError({
+              provider: "gemini-api",
+              model: geminiCandidate,
+              error: msg,
+              latencyMs,
+            });
+            if (msg.includes("Gemini HTTP 429")) {
+              setModelBackoff("gemini", geminiCandidate);
+            }
+            lastGeminiError = err;
+          }
+        }
+        throw lastGeminiError;
+      } catch (err) {
+        const msg = String(err?.message || err || "unknown");
+        if (msg.includes("Gemini HTTP 429")) {
+          setModelBackoff("gemini", geminiCandidate);
+        }
+        console.warn(`[AI ROUTING] Gemini failed -> no provider left (${msg})`);
+        errors.push(`gemini: ${msg}`);
+      }
+    } else if (GEMINI_API_KEY) {
+      const waitSec = getRemainingBackoffSec("gemini", GEMINI_MODEL);
+      console.warn(`[AI ROUTING] Gemini skipped (cooldown ${waitSec}s).`);
+      collector.addError({
+        provider: "gemini-api",
+        model: GEMINI_MODEL,
+        error: `cooldown ${waitSec}s`,
+      });
+      errors.push(`gemini: cooldown ${waitSec}s`);
+    }
   }
+
+  const collected = maybeReturnCollected("final-collector-selection");
+  if (collected) return collected;
 
   if (!GEMINI_API_KEY && !OPENROUTER_API_KEY && !HF_TOKEN && !ROUTEWAY_API_KEY) {
     return buildNoSafeFallbackResult("no provider configured");
@@ -2317,12 +2893,68 @@ const server = http.createServer(async (req, res) => {
     };
     console.log(`[AI INPUT ${new Date().toISOString()}] ${toSafeJsonLog(inputLog)}`);
 
-    const result = await callOpenRouter({
+    const requestOpenrouterOnly = parseBoolean(payload?.openrouterOnly, false);
+    const requestKey = buildRequestKey({
+      mode,
       prompt,
       context,
       history: payload?.history,
-      mode,
+      openrouterOnly: requestOpenrouterOnly,
     });
+
+    const immediateCached = getRecentSuccess(requestKey);
+    if (immediateCached) {
+      console.log("[AI ROUTING] Returning cached successful answer for identical request.");
+      const nowIso = new Date().toISOString();
+      console.log(
+        `[AI LIVE ${nowIso}] provider=${immediateCached.provider || "openrouter-proxy"} model=${immediateCached.model || "unknown"} mode=${mode} answer="${previewAnswer(immediateCached.answer)}"`
+      );
+      writeJson(res, 200, {
+        answer: immediateCached.answer,
+        provider: immediateCached.provider || "openrouter-proxy",
+        model: immediateCached.model,
+        mode,
+      });
+      return;
+    }
+
+    const computeResult = async () => {
+      const rawResult = await callOpenRouter({
+        prompt,
+        context,
+        history: payload?.history,
+        mode,
+        openrouterOnly: requestOpenrouterOnly,
+      });
+
+      // Never discard a known-good answer for the same exact request key.
+      if (!String(rawResult?.answer || "").trim() || rawResult?.provider === "error") {
+        const cached = getRecentSuccess(requestKey);
+        if (cached) {
+          console.warn("[AI ROUTING] Reusing recent successful answer for identical request.");
+          return cached;
+        }
+      }
+
+      if (rawResult?.provider !== "error") {
+        setRecentSuccess(requestKey, rawResult);
+      }
+
+      return rawResult;
+    };
+
+    let requestPromise = inflightAiRequests.get(requestKey);
+    if (!requestPromise) {
+      requestPromise = computeResult()
+        .finally(() => {
+          inflightAiRequests.delete(requestKey);
+        });
+      inflightAiRequests.set(requestKey, requestPromise);
+    } else {
+      console.log("[AI ROUTING] Joining in-flight identical request.");
+    }
+
+    const result = await requestPromise;
 
     const nowIso = new Date().toISOString();
     console.log(
@@ -2348,7 +2980,8 @@ server.listen(PORT, () => {
   const routewayMode = ROUTEWAY_API_KEY ? `enabled (${ROUTEWAY_MODEL})` : "disabled";
   const hfMode = HF_FALLBACK_ENABLED && HF_TOKEN ? `enabled (${HF_MODEL})` : "disabled";
   const safeMode = AI_SAFE_FALLBACK_ENABLED ? "enabled" : "disabled";
-  console.log(`AI proxy listening on http://localhost:${PORT}/ai (Routeway: ${routewayMode}, HF: ${hfMode}, OpenRouter free-only=${OPENROUTER_REQUIRE_FREE_MODELS}, Gemini: ${geminiMode}, Safe fallback: ${safeMode})`);
+  const forceOpenRouterMode = AI_FORCE_OPENROUTER_ONLY ? "enabled" : "disabled";
+  console.log(`AI proxy listening on http://localhost:${PORT}/ai (Routeway: ${routewayMode}, HF: ${hfMode}, OpenRouter free-only=${OPENROUTER_REQUIRE_FREE_MODELS}, Gemini: ${geminiMode}, Safe fallback: ${safeMode}, Force OpenRouter-only: ${forceOpenRouterMode})`);
 });
 
 

@@ -1,4 +1,4 @@
-import { doc, getDoc, onSnapshot, runTransaction, serverTimestamp, setDoc } from "firebase/firestore";
+import { doc, getDoc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import { firestore } from "./firebase.js";
 
 export const DAILY_AI_PILOT_QUESTIONS = 3;
@@ -31,20 +31,40 @@ export const saveUserCloudData = async (uid, payload) => {
 
 export const loadDashboardInsight = async (uid) => {
   if (!uid) return null;
-  const snap = await getDoc(userDashboardInsightRef(uid));
-  if (!snap.exists()) return null;
-  const data = snap.data() || {};
+  const rootSnap = await getDoc(userDocRef(uid));
+  if (rootSnap.exists()) {
+    const rootData = rootSnap.data() || {};
+    const text = String(rootData.dashboardInsightText || "").trim();
+    if (text) {
+      return {
+        text,
+        count: Number.isFinite(Number(rootData.dashboardInsightCount)) ? Number(rootData.dashboardInsightCount) : -1,
+        signature: String(rootData.dashboardInsightSignature || "").trim(),
+      };
+    }
+  }
+
+  const legacySnap = await getDoc(userDashboardInsightRef(uid));
+  if (!legacySnap.exists()) return null;
+  const data = legacySnap.data() || {};
   const text = String(data.text || "").trim();
   if (!text) return null;
-  return { text };
+  return {
+    text,
+    count: Number.isFinite(Number(data.count)) ? Number(data.count) : -1,
+    signature: String(data.signature || "").trim(),
+  };
 };
 
 export const saveDashboardInsight = async (uid, payload) => {
   if (!uid) return;
   await setDoc(
-    userDashboardInsightRef(uid),
+    userDocRef(uid),
     {
-      text: String(payload?.text || "").trim(),
+      dashboardInsightText: String(payload?.text || "").trim(),
+      dashboardInsightCount: Number.isFinite(Number(payload?.count)) ? Number(payload.count) : -1,
+      dashboardInsightSignature: String(payload?.signature || "").trim(),
+      dashboardInsightUpdatedAt: serverTimestamp(),
     },
     { merge: true }
   );
@@ -70,7 +90,7 @@ export const subscribeUserCloudData = (uid, onData, onError) => {
 };
 
 // Quota management for AI questions
-const userQuotaDocRef = (uid) => doc(firestore, "users", uid, "quota", "daily");
+const quotaStorageKey = (uid) => `np6_ai_quota_${uid}`;
 const buildDayKey = () => {
   // Daily AI quota resets at 00:00 in European local time (Europe/Berlin).
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -82,6 +102,26 @@ const buildDayKey = () => {
 
   const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
   return `${map.year}-${map.month}-${map.day}`;
+};
+
+const readQuotaState = (uid) => {
+  if (!uid) return null;
+  try {
+    const raw = window.localStorage.getItem(quotaStorageKey(uid));
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+const writeQuotaState = (uid, state) => {
+  if (!uid) return;
+  try {
+    window.localStorage.setItem(quotaStorageKey(uid), JSON.stringify(state));
+  } catch {
+    // Ignore localStorage write failures.
+  }
 };
 
 const normalizeQuotaDoc = (data, limit, dayKey) => {
@@ -111,34 +151,16 @@ export const getUserQuestionQuota = async (uid, limit = 3) => {
   if (!uid) return { allowed: false, remaining: 0, used: 0, reset: null };
   try {
     const dayKey = buildDayKey();
-    const quotaRef = userQuotaDocRef(uid);
-    const snap = await getDoc(quotaRef);
+    const existing = readQuotaState(uid);
+    const normalized = normalizeQuotaDoc(existing || {}, limit, dayKey);
 
-    if (!snap.exists()) {
-      await setDoc(quotaRef, {
-        used: 0,
-        remaining: limit,
+    if (!existing || normalized.lastReset !== dayKey || Number(existing?.remaining) !== normalized.remaining) {
+      writeQuotaState(uid, {
+        used: normalized.used,
+        remaining: normalized.remaining,
         limit,
         lastReset: dayKey,
-        updatedAt: serverTimestamp(),
       });
-      return { allowed: true, remaining: limit, used: 0, reset: dayKey };
-    }
-
-    const normalized = normalizeQuotaDoc(snap.data(), limit, dayKey);
-
-    if (normalized.lastReset !== dayKey || Number(snap.data()?.remaining) !== normalized.remaining) {
-      await setDoc(
-        quotaRef,
-        {
-          used: normalized.used,
-          remaining: normalized.remaining,
-          limit,
-          lastReset: dayKey,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
     }
 
     return {
@@ -157,48 +179,31 @@ export const consumeUserQuestionQuota = async (uid, limit = 3) => {
   if (!uid) return { allowed: false, remaining: 0 };
   try {
     const dayKey = buildDayKey();
-    const result = await runTransaction(firestore, async (transaction) => {
-      const quotaRef = userQuotaDocRef(uid);
-      const snap = await transaction.get(quotaRef);
+    const existing = readQuotaState(uid) || {};
+    const normalized = normalizeQuotaDoc(existing, limit, dayKey);
 
-      const normalized = normalizeQuotaDoc(snap.exists() ? snap.data() : {}, limit, dayKey);
-      if (normalized.remaining <= 0) {
-        transaction.set(
-          quotaRef,
-          {
-            used: normalized.used,
-            remaining: 0,
-            limit,
-            lastReset: dayKey,
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-        return { allowed: false, remaining: 0 };
-      }
+    if (normalized.remaining <= 0) {
+      writeQuotaState(uid, {
+        used: normalized.used,
+        remaining: 0,
+        limit,
+        lastReset: dayKey,
+      });
+      return { allowed: false, remaining: 0 };
+    }
 
-      const nextUsed = normalized.used + 1;
-      const nextRemaining = Math.max(0, limit - nextUsed);
-
-      transaction.set(
-        quotaRef,
-        {
-          used: nextUsed,
-          remaining: nextRemaining,
-          limit,
-          lastReset: dayKey,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      return { allowed: true, remaining: nextRemaining };
+    const nextUsed = normalized.used + 1;
+    const nextRemaining = Math.max(0, limit - nextUsed);
+    writeQuotaState(uid, {
+      used: nextUsed,
+      remaining: nextRemaining,
+      limit,
+      lastReset: dayKey,
     });
 
-    return result;
+    return { allowed: true, remaining: nextRemaining };
   } catch (err) {
     console.error("consumeUserQuestionQuota failed:", err);
-    // Fail-open: assume quota available on transient errors to avoid permanently blocking user
     return { allowed: true, remaining: limit - 1, degraded: true };
   }
 };

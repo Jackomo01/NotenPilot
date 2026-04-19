@@ -3,11 +3,13 @@ import { motion } from "framer-motion";
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { useApp } from "../context/index.jsx";
 import { useToast } from "../context/index.jsx";
+import { useLS } from "../hooks/index.jsx";
 import { wAvg, fDE, gc, toStr } from "../utils/helpers.jsx";
 import { C, R, ARTEN } from "../utils/tokens.jsx";
 import { SparkBtn, Card, Lbl, HR, Bdg, SelInp, Modal } from "../components/ui.jsx";
 import { ChartTip } from "../components/ui.jsx";
 import GradeForm from "../components/GradeForm.jsx";
+import { AI_OPENROUTER_ONLY_KEY } from "../utils/ai.jsx";
 
 
 
@@ -422,6 +424,7 @@ export const StatsPage = memo(() => {
 export const SettingsPage = memo(({ user, onLogout }) => {
   const { grades, setGrades, subjects, setSubjects } = useApp();
   const [confirm, setConfirm] = useState(false);
+  const [openRouterOnly, setOpenRouterOnly] = useLS(AI_OPENROUTER_ONLY_KEY, false);
   const toast = useToast();
 
   const exp = () => {
@@ -454,6 +457,42 @@ export const SettingsPage = memo(({ user, onLogout }) => {
         </Card>
 
         <div style={{display:"grid",gap:16,alignContent:"start"}}>
+          <Card pad="22px">
+            <div style={{fontSize:14,fontWeight:600,color:C.t0,marginBottom:8}}>AI Routing</div>
+            <div style={{fontSize:12,color:C.t1,marginBottom:12}}>Testweise nur OpenRouter-Antworten zulassen und alle Fallback-Provider überspringen.</div>
+            <button
+              type="button"
+              onClick={() => {
+                setOpenRouterOnly((prev) => !prev);
+                toast(openRouterOnly ? "OpenRouter-only deaktiviert." : "OpenRouter-only aktiviert.");
+              }}
+              style={{
+                display:"inline-flex",
+                alignItems:"center",
+                gap:10,
+                padding:"10px 14px",
+                borderRadius:R.s,
+                border:`1px solid ${openRouterOnly ? C.acc : C.line}`,
+                background: openRouterOnly ? `${C.acc}18` : C.bg4,
+                color:C.t0,
+                cursor:"pointer",
+                fontFamily:"inherit",
+                fontSize:13,
+                fontWeight:600,
+              }}
+            >
+              <span style={{
+                width:12,
+                height:12,
+                borderRadius:999,
+                background: openRouterOnly ? C.acc : C.line,
+                boxShadow: openRouterOnly ? `0 0 0 4px ${C.acc}22` : "none",
+                transition:"all 0.15s ease",
+              }} />
+              {openRouterOnly ? "Nur OpenRouter aktiv" : "OpenRouter-only einschalten"}
+            </button>
+          </Card>
+
           <Card pad="22px">
             <div style={{fontSize:14,fontWeight:600,color:C.t0,marginBottom:8}}>Konto</div>
             <div style={{fontSize:12,color:C.t1,marginBottom:12}}>Angemeldet als <strong style={{color:C.t0}}>{user?.email}</strong>.</div>
