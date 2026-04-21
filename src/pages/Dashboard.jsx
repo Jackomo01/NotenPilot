@@ -374,27 +374,6 @@ const Dashboard = memo(({ loading, user, cloudSynced = false }) => {
         </Card>
       </div>
 
-      {/* Schnitt nach Fach */}
-      {sStats.length > 0 && (
-        <Card pad="22px">
-          <div style={{ fontSize:13, fontWeight:600, color:C.t0, marginBottom:16 }}>Schnitt nach Fach</div>
-          <ResponsiveContainer width="100%" height={Math.max(80, sStats.length * 36)}>
-            <BarChart data={sStats} layout="vertical" margin={{top:0,right:8,bottom:0,left:0}}>
-              <CartesianGrid stroke={C.line} strokeDasharray="4 4" horizontal={false}/>
-              <XAxis type="number" domain={[1,6]} reversed tick={{fill:C.t2,fontSize:10}} axisLine={false} tickLine={false}/>
-              <YAxis type="category" dataKey="name" tick={{fill:C.t1,fontSize:11}} axisLine={false} tickLine={false} width={90}/>
-              <Tooltip
-                content={<ChartTip/>}
-                cursor={{ fill: C.bg3 }}
-                wrapperStyle={{ outline:"none" }}
-              />
-              <Bar dataKey="avg" name="Schnitt" radius={[0,3,3,0]}>
-                {sStats.map((s,i) => <Cell key={i} fill={gc(s.avg)}/>)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </Card>
-      )}
     </motion.div>
   );
 });

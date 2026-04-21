@@ -235,6 +235,8 @@ const shouldSkipOpenRouterDueToLimits = async () => {
 const inflightAiRequests = new Map();
 const recentSuccessfulAiResponses = new Map();
 const RECENT_SUCCESS_TTL_MS = 5 * 60 * 1000;
+let huggingFaceDisabledUntilTs = 0;
+const HF_DISABLE_ON_402_MS = 30 * 60 * 1000;
 
 // Per-model rate-limit backoff tracking
 const modelBackoffUntilTs = new Map(); // Key: "provider:model", Value: timestamp when backoff expires
@@ -324,12 +326,40 @@ setInterval(async () => {
   }
 }, 5 * 60 * 1000); // Every 5 minutes
 
+const canonicalizeContextForKey = (context, prompt = "") => {
+  if (!isDashboardInsightTask(prompt)) return context;
+  const safe = context && typeof context === "object" ? context : {};
+  const grades = Array.isArray(safe.grades) ? safe.grades : [];
+  const subjects = Array.isArray(safe.subjects) ? safe.subjects : [];
+
+  const canonicalGrades = grades
+    .map((g) => ({
+      grade: Number(g?.grade),
+      weight: Number(g?.weight),
+      subject: String(g?.subject || ""),
+      type: String(g?.type || ""),
+      date: String(g?.date || ""),
+    }))
+    .sort((a, b) =>
+      String(a.date).localeCompare(String(b.date)) ||
+      String(a.subject).localeCompare(String(b.subject)) ||
+      String(a.type).localeCompare(String(b.type)) ||
+      Number(a.grade) - Number(b.grade) ||
+      Number(a.weight) - Number(b.weight)
+    );
+
+  return {
+    grades: canonicalGrades,
+    subjects: [...subjects].map((s) => String(s || "")).sort((a, b) => a.localeCompare(b)),
+  };
+};
+
 const buildRequestKey = ({ mode, prompt, context, history, openrouterOnly }) => {
   const payload = {
     mode,
     prompt: String(prompt || ""),
-    context,
-    history: Array.isArray(history) ? history : [],
+    context: canonicalizeContextForKey(context, prompt),
+    history: isDashboardInsightTask(prompt) ? [] : (Array.isArray(history) ? history : []),
     openrouterOnly: Boolean(openrouterOnly),
   };
   return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
@@ -457,6 +487,7 @@ const buildSystemPrompt = (context, prompt = "") => {
   const fullContext = context && typeof context === "object" ? context : {};
   const grades = Array.isArray(fullContext.grades) ? fullContext.grades : [];
   const subjects = Array.isArray(fullContext.subjects) ? fullContext.subjects.filter(Boolean) : [];
+  const gradeTypes = [...new Set(grades.map((g) => String(g?.type || "").trim()).filter(Boolean))];
   const sortedByDate = [...grades].sort((a, b) => String(b?.date || "").localeCompare(String(a?.date || "")));
   const newest = sortedByDate[0] || null;
   const best = [...grades]
@@ -504,6 +535,8 @@ const buildSystemPrompt = (context, prompt = "") => {
     "   Vertrau den Calculations — sie sind vom Frontend validiert.",
     "- Base all calculations strictly on the provided JSON.",
     "- Never invent grades or assume missing data.",
+    "- Nenne nur Faecher und Leistungsarten (type), die im JSON vorkommen.",
+    "- Wenn eine Leistungsart nicht in den Daten vorkommt, erwaehne sie nicht.",
     "",
     "GRADING SYSTEM:",
     "- German scale: 1=very good (best), 2=good, 3=satisfactory, 4=sufficient, 5=poor, 6=very poor (worst).",
@@ -544,6 +577,7 @@ const buildSystemPrompt = (context, prompt = "") => {
     "",
     "USER'S CURRENT DATA:",
     `Available subjects: ${subjects.length ? subjects.join(", ") : "none"}`,
+    `Available grade types: ${gradeTypes.length ? gradeTypes.join(", ") : "none"}`,
     `Newest grade: ${newest ? `${String(newest.subject || "Unknown")} ${String(newest.grade ?? "?")} on ${String(newest.date || "")}` : "none"}`,
     `Best grade: ${best ? `${String(best.subject || "Unknown")} ${String(best.grade ?? "?")}` : "none"}`,
     `Total grades recorded: ${grades.length}`,
@@ -1308,14 +1342,7 @@ const levenshtein = (a, b) => {
 
 const inferTypeFromPrompt = (prompt, grades = []) => {
   const p = String(prompt || "").toLowerCase();
-  const known = new Set([
-    "schulaufgabe",
-    "kurztest",
-    "ausfrage",
-    "stegreifaufgabe",
-    "kurzarbeit",
-    ...grades.map((g) => String(g?.type || "").toLowerCase()).filter(Boolean),
-  ]);
+  const known = new Set(grades.map((g) => String(g?.type || "").toLowerCase()).filter(Boolean));
   for (const t of known) {
     if (t && p.includes(t)) return t;
   }
@@ -1326,14 +1353,7 @@ const inferReplacedTypeFromPrompt = (prompt, grades = []) => {
   const p = String(prompt || "").toLowerCase();
   const markers = ["statt", "anstatt", "ersetz", "tausch"];
   if (!markers.some((m) => p.includes(m))) return null;
-  const known = [
-    "schulaufgabe",
-    "kurztest",
-    "ausfrage",
-    "stegreifaufgabe",
-    "kurzarbeit",
-    ...grades.map((g) => String(g?.type || "").toLowerCase()).filter(Boolean),
-  ];
+  const known = grades.map((g) => String(g?.type || "").toLowerCase()).filter(Boolean);
   for (const t of known) {
     const re = new RegExp(`(?:statt|anstatt)[^\\n]{0,30}${t}`, "i");
     if (re.test(p)) return t;
@@ -1635,12 +1655,17 @@ const normalizeAnswer = ({ prompt, answer, context }) => {
     return buildTrendOnlyAnswer({ prompt, context });
   }
 
-  const sentences = splitSentences(txt).slice(0, 2);
-  txt = sentences.join(" ").trim();
+  const isDashboardTask = isDashboardInsightTask(prompt);
+  if (isDashboardTask) {
+    txt = txt.trim();
+  } else {
+    const sentences = splitSentences(txt).slice(0, 2);
+    txt = sentences.join(" ").trim();
 
-  const words = txt.split(/\s+/).filter(Boolean);
-  if (words.length > 36) {
-    txt = `${words.slice(0, 36).join(" ")}.`;
+    const words = txt.split(/\s+/).filter(Boolean);
+    if (words.length > 36) {
+      txt = `${words.slice(0, 36).join(" ")}.`;
+    }
   }
 
   if (!txt) {
@@ -1721,6 +1746,37 @@ const isFalseNoDataClaim = (answer, context) => {
   return markers.some((m) => t.includes(m));
 };
 
+const mentionsUnknownGradeType = (answer, context) => {
+  const t = String(answer || "").toLowerCase();
+  if (!t.trim()) return false;
+
+  const knownTypes = new Set(
+    (Array.isArray(context?.grades) ? context.grades : [])
+      .map((g) => String(g?.type || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+  if (!knownTypes.size) return false;
+
+  const canonicalTypes = [
+    "schulaufgabe",
+    "ausfrage",
+    "kurztest",
+    "stegreifaufgabe",
+    "kurzarbeit",
+    "hausaufgabe",
+    "mitarbeit",
+    "jahrgangsstufentest",
+    "sonstige",
+  ];
+
+  return canonicalTypes.some((typeName) => {
+    if (knownTypes.has(typeName)) return false;
+    const escaped = typeName.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&");
+    const re = new RegExp(`\\b${escaped}\\b`, "i");
+    return re.test(t);
+  });
+};
+
 const isUngroundedAnswer = ({ prompt, answer, context }) => {
   const t = String(answer || "").toLowerCase();
   const p = String(prompt || "").toLowerCase();
@@ -1732,6 +1788,8 @@ const isUngroundedAnswer = ({ prompt, answer, context }) => {
   );
 
   if (!t.trim()) return true;
+
+  if (mentionsUnknownGradeType(answer, context)) return true;
 
   const genericAppGuidance = ["öffne die app", "oeffne die app", "navigiere", "notenübersicht", "notenuebersicht"];
   if (genericAppGuidance.some((m) => t.includes(m))) return true;
@@ -2000,6 +2058,7 @@ const callOpenRouterOnce = async ({ prompt, context, history, mode, model, lenie
 
   const requestedModel = String(model || "").trim().toLowerCase();
   const isFreeRouterRequest = requestedModel === OPENROUTER_FREE_ROUTER_ID;
+  const isDashboardTask = isDashboardInsightTask(prompt);
   const retryableFreeModel = "nvidia/nemotron-nano-12b-v2-vl:free";
 
   const responseModel = (data) => String(
@@ -2011,7 +2070,7 @@ const callOpenRouterOnce = async ({ prompt, context, history, mode, model, lenie
 
   const isNemotronModel = (value) => String(value || "").toLowerCase().includes("nemotron");
 
-  const requestOpenRouter = async (messages) => {
+  const requestOpenRouter = async (messages, maxTokens = mode === "quick" ? 100 : 160) => {
     const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
@@ -2024,7 +2083,7 @@ const callOpenRouterOnce = async ({ prompt, context, history, mode, model, lenie
         model,
         messages,
         temperature: mode === "quick" ? 0.2 : 0.25,
-        max_tokens: mode === "quick" ? 100 : 160,
+        max_tokens: maxTokens,
         stream: false,
       }),
     });
@@ -2047,7 +2106,7 @@ const callOpenRouterOnce = async ({ prompt, context, history, mode, model, lenie
     return { data, answer };
   };
 
-  const maybeRetryFreeRouter = async (data, answer) => {
+  const maybeRetryFreeRouter = async (data, answer, maxTokens) => {
     if (!isFreeRouterRequest) return { data, answer, retried: false };
 
     const modelFromResponse = responseModel(data);
@@ -2060,31 +2119,27 @@ const callOpenRouterOnce = async ({ prompt, context, history, mode, model, lenie
     if (!shouldRetry) return { data, answer, retried: false };
 
     console.log(`[AI ROUTING] OpenRouter free router returned no usable answer; retrying once.`);
-    const retried = await requestOpenRouter(buildMessages({ prompt, context, history }));
+    const retried = await requestOpenRouter(buildMessages({ prompt, context, history }), maxTokens);
     return { ...retried, retried: true };
   };
 
-  const first = await requestOpenRouter(buildMessages({ prompt, context, history }));
+  const initialMaxTokens = isDashboardTask ? 240 : (mode === "quick" ? 100 : 160);
+  const first = await requestOpenRouter(buildMessages({ prompt, context, history }), initialMaxTokens);
   let { data, answer } = first;
 
-  const retryResult = await maybeRetryFreeRouter(data, answer);
+  const retryResult = await maybeRetryFreeRouter(data, answer, initialMaxTokens);
   data = retryResult.data;
   answer = retryResult.answer;
 
-  if (isUngroundedAnswer({ prompt, answer, context })) {
-    const repaired = await requestOpenRouter(buildRepairMessages({ prompt, context, history }));
-    data = repaired.data;
-    answer = repaired.answer;
-  }
+  const needsRepair =
+    isUngroundedAnswer({ prompt, answer, context }) ||
+    isBrokenAnswer(answer) ||
+    looksEnglish(answer) ||
+    isLikelyTruncated(data, answer);
 
-  if (isBrokenAnswer(answer)) {
-    const repaired = await requestOpenRouter(buildRepairMessages({ prompt, context, history }));
-    data = repaired.data;
-    answer = repaired.answer;
-  }
-
-  if (looksEnglish(answer)) {
-    const repaired = await requestOpenRouter(buildRepairMessages({ prompt, context, history }));
+  if (needsRepair) {
+    const repairMaxTokens = isDashboardTask ? 300 : initialMaxTokens;
+    const repaired = await requestOpenRouter(buildRepairMessages({ prompt, context, history }), repairMaxTokens);
     data = repaired.data;
     answer = repaired.answer;
   }
@@ -2206,6 +2261,11 @@ const callHuggingFaceOnce = async ({ prompt, context, history, mode }) => {
       if (httpCode === 429) {
         setModelBackoff("huggingface", HF_MODEL);
       }
+      if (httpCode === 402) {
+        huggingFaceDisabledUntilTs = Date.now() + HF_DISABLE_ON_402_MS;
+        const waitMin = Math.ceil(HF_DISABLE_ON_402_MS / 60000);
+        console.warn(`[AI ROUTING] HuggingFace disabled for ${waitMin}m due to HTTP 402 (credits depleted).`);
+      }
       throw new Error(`HuggingFace HTTP ${httpCode}: ${errText.slice(0, 300)}`);
     }
 
@@ -2271,7 +2331,7 @@ const isLikelyTruncated = (raw, answer) => {
   return !endsClean;
 };
 
-const shouldFallbackToHuggingFace = () => true;
+const shouldFallbackToHuggingFace = () => Date.now() >= huggingFaceDisabledUntilTs;
 
 const toNum = (v) => {
   const n = Number(v);
@@ -2640,12 +2700,17 @@ const callOpenRouter = async ({ prompt, context, history, mode, openrouterOnly =
           ? modelCandidates.filter(isAllowedOpenRouterModel)
           : await resolveOpenRouterModelCandidates(modelCandidates);
 
+        const candidatesReadyNow = resolvedCandidates.filter((m) => !isModelInBackoff("openrouter", m));
+
         if (!resolvedCandidates.length) {
           throw new Error("No valid OpenRouter model IDs configured.");
         }
+        if (!candidatesReadyNow.length) {
+          throw new Error("All OpenRouter model candidates are currently in cooldown.");
+        }
 
         let lastError = new Error("OpenRouter lieferte keine verwertbare Textantwort.");
-        for (const modelCandidate of resolvedCandidates) {
+        for (const modelCandidate of candidatesReadyNow) {
           console.log(`[AI ROUTING] Trying OpenRouter (${modelCandidate})...`);
           const startedAt = Date.now();
           try {

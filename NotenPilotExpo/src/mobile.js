@@ -233,7 +233,6 @@ const buildBackendPayload = (prompt, ctx, history = [], mode = "chat") => ({
     firestoreSnapshot: {
       grades: ctx.grades,
       subjects: ctx.subjects,
-      fetchedAt: new Date().toISOString(),
     },
   },
   history: history.slice(-8).filter((m) => m.role === "user" || m.role === "assistant").map((m) => ({ role: m.role, text: m.text || "" })),
@@ -1018,9 +1017,19 @@ const DashboardScreen = ({ navigation, highlightId, onOpenAdd, onOpenEdit, onSea
   const { grades, subjects, user, pushToast } = useApp();
   const [insight, setInsight] = useState("AI Insight wird geladen...");
   const [loadingInsight, setLoadingInsight] = useState(true);
-  const insightCountRef = useRef(-1);
+  const insightSignatureRef = useRef("");
+  const insightLoadedRef = useRef(false);
   const avg = wAvg(grades);
   const avgColor = avg ? gc(avg) : C.t2;
+  const gradeSignature = useMemo(
+    () => JSON.stringify(
+      grades
+        .map((g) => ({ id: g.id, subject: g.subject, grade: g.grade, weight: g.weight, date: g.date, type: g.type }))
+        .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+    ),
+    [grades]
+  );
+  const aiContext = useMemo(() => buildAIContext(grades, subjects), [grades, subjects]);
   const sStats = useMemo(() => subjects.map((s) => {
     const sg = grades.filter((g) => g.subject === s);
     return { label: s, value: wAvg(sg), count: sg.length };
@@ -1029,36 +1038,56 @@ const DashboardScreen = ({ navigation, highlightId, onOpenAdd, onOpenEdit, onSea
   const recent = useMemo(() => [...grades].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 6), [grades]);
 
   useEffect(() => {
+    insightLoadedRef.current = false;
+    insightSignatureRef.current = "";
+    setLoadingInsight(true);
+  }, [user?.uid]);
+
+  useEffect(() => {
     let cancelled = false;
     const run = async () => {
       if (!user?.uid) {
-        setInsight(buildDashboardInsight(buildAIContext(grades, subjects)));
+        setInsight(buildDashboardInsight(aiContext));
+        insightSignatureRef.current = gradeSignature;
         setLoadingInsight(false);
         return;
       }
       try {
-        const persisted = await loadDashboardInsight(user.uid);
-        if (!cancelled && persisted?.text) setInsight(persisted.text);
-      } catch {}
-      try {
-        const count = grades.length;
-        const shouldRefresh = insightCountRef.current < 0 || Math.max(0, count - insightCountRef.current) >= 2;
-        if (!shouldRefresh) return;
-        const result = await dashboardInsightDetailed(buildAIContext(grades, subjects));
+        if (!insightLoadedRef.current) {
+          const persisted = await loadDashboardInsight(user.uid).catch(() => null);
+          insightLoadedRef.current = true;
+          if (!cancelled && persisted?.text) {
+            setInsight(persisted.text);
+            insightSignatureRef.current = gradeSignature;
+            setLoadingInsight(false);
+            return;
+          }
+        }
+
+        if (insightSignatureRef.current === gradeSignature) {
+          if (!cancelled) setLoadingInsight(false);
+          return;
+        }
+
+        if (!cancelled) setLoadingInsight(true);
+        const result = await dashboardInsightDetailed(aiContext);
         if (cancelled) return;
-        const next = String(result?.answer || "").trim() || buildDashboardInsight(buildAIContext(grades, subjects));
+        const next = String(result?.answer || "").trim() || buildDashboardInsight(aiContext);
         setInsight(next);
-        insightCountRef.current = count;
-        if (user?.uid) saveDashboardInsight(user.uid, { text: next }).catch(() => {});
+        insightSignatureRef.current = gradeSignature;
+        saveDashboardInsight(user.uid, { text: next }).catch(() => {});
       } catch {
-        if (!cancelled) setInsight(buildDashboardInsight(buildAIContext(grades, subjects)));
+        if (!cancelled) {
+          setInsight(buildDashboardInsight(aiContext));
+          insightSignatureRef.current = gradeSignature;
+        }
       } finally {
         if (!cancelled) setLoadingInsight(false);
       }
     };
     run();
     return () => { cancelled = true; };
-  }, [grades.length, user?.uid]);
+  }, [aiContext, gradeSignature, user?.uid]);
 
   return (
     <SafeAreaView style={styles.screen}>

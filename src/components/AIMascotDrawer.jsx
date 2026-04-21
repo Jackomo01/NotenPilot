@@ -53,12 +53,18 @@ const AIMascotDrawer = memo(({
   const [sending, setSending] = useState(false);
   const [cooldownRemainingMs, setCooldownRemainingMs] = useState(0);
   const [hasUnread, setHasUnread] = useLS("np6_ai_widget_unread", false);
+  const [localMessages, setLocalMessages] = useLS("np6_ai_widget_messages", []);
+  const [localAskedQuestions, setLocalAskedQuestions] = useLS("np6_ai_widget_asked_questions", []);
   const [panelDragging, setPanelDragging] = useState(false);
   const [buttonDragging, setButtonDragging] = useState(false);
   const dragStartRef = useRef(null);
   const dragMovedRef = useRef(false);
   const listRef = useRef(null);
   const cooldownTimerRef = useRef(null);
+  const effectiveMessages = Array.isArray(messages) ? messages : localMessages;
+  const updateMessages = typeof setMessages === "function" ? setMessages : setLocalMessages;
+  const effectiveAskedQuestions = Array.isArray(askedQuestions) ? askedQuestions : localAskedQuestions;
+  const updateAskedQuestions = typeof setAskedQuestions === "function" ? setAskedQuestions : setLocalAskedQuestions;
 
   const liveContext = useMemo(() => buildAIContext(grades, subjects), [grades, subjects]);
 
@@ -68,11 +74,10 @@ const AIMascotDrawer = memo(({
   }, [open, setHasUnread]);
 
   useEffect(() => {
-    if (!setAskedQuestions) return;
-    setAskedQuestions([]);
-  }, [user?.uid, setAskedQuestions]);
+    updateAskedQuestions([]);
+  }, [user?.uid, updateAskedQuestions]);
 
-  const currentSuggestions = useMemo(() => getSuggestions(liveContext, askedQuestions), [liveContext, askedQuestions]);
+  const currentSuggestions = useMemo(() => getSuggestions(liveContext, effectiveAskedQuestions), [liveContext, effectiveAskedQuestions]);
   const sparklinePath = useMemo(() => buildSparklinePath(liveContext?.grades || []), [liveContext?.grades]);
   const trendMeta = useMemo(() => {
     const slope = Number(liveContext?.trendSlope || 0);
@@ -82,10 +87,10 @@ const AIMascotDrawer = memo(({
   }, [liveContext?.trendSlope]);
 
   useEffect(() => {
-    const last = messages[messages.length - 1];
+    const last = effectiveMessages[effectiveMessages.length - 1];
     if (!last) return;
     if (!open && last.role === "assistant" && !last.streaming) setHasUnread(true);
-  }, [messages, open, setHasUnread]);
+  }, [effectiveMessages, open, setHasUnread]);
 
   useEffect(() => {
     if (!open) return;
@@ -94,7 +99,7 @@ const AIMascotDrawer = memo(({
     requestAnimationFrame(() => {
       el.scrollTo({ top: el.scrollHeight, behavior: window.innerWidth <= 768 ? "auto" : "smooth" });
     });
-  }, [messages, open]);
+  }, [effectiveMessages, open]);
 
   useEffect(() => {
     if (!cooldownRemainingMs) return undefined;
@@ -111,7 +116,7 @@ const AIMascotDrawer = memo(({
     if (!prompt || sending || cooldownRemainingMs > 0) return;
 
     if (user?.uid && !cloudSynced) {
-      setMessages((prev) => [...prev, {
+      updateMessages((prev) => [...prev, {
         id: `ws_${Date.now()}`,
         role: "assistant",
         text: "Bitte kurz warten: Deine Daten werden noch mit der Cloud synchronisiert.",
@@ -122,9 +127,9 @@ const AIMascotDrawer = memo(({
       return;
     }
 
-    const hasAsked = (askedQuestions || []).some((q) => normalizeQ(q) === normalizeQ(prompt));
-    const nextAsked = hasAsked ? askedQuestions : [...(askedQuestions || []), prompt];
-    setAskedQuestions?.(nextAsked);
+    const hasAsked = (effectiveAskedQuestions || []).some((q) => normalizeQ(q) === normalizeQ(prompt));
+    const nextAsked = hasAsked ? effectiveAskedQuestions : [...(effectiveAskedQuestions || []), prompt];
+    updateAskedQuestions(nextAsked);
 
     if (user?.uid) {
       try {
@@ -139,7 +144,7 @@ const AIMascotDrawer = memo(({
             streaming: false,
             followUps: [],
           };
-          setMessages((prev) => [...prev, limitMsg]);
+          updateMessages((prev) => [...prev, limitMsg]);
           return;
         }
       } catch {
@@ -151,7 +156,7 @@ const AIMascotDrawer = memo(({
           streaming: false,
           followUps: [],
         };
-        setMessages((prev) => [...prev, quotaErrorMsg]);
+        updateMessages((prev) => [...prev, quotaErrorMsg]);
         return;
       }
     }
@@ -173,7 +178,7 @@ const AIMascotDrawer = memo(({
       aiModel: null,
     };
 
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    updateMessages((prev) => [...prev, userMsg, assistantMsg]);
 
     await waitForAICooldown("ai-mascot");
 
@@ -193,18 +198,18 @@ const AIMascotDrawer = memo(({
 
     const runtimeCtx = buildAIContext(runtimeGrades, runtimeSubjects);
 
-    const history = messages.filter((m) => m.role === "user" || m.role === "assistant");
+    const history = effectiveMessages.filter((m) => m.role === "user" || m.role === "assistant");
     for await (const partial of streamChatAnswer(prompt, runtimeCtx, history, undefined, (meta) => {
-      setMessages((prev) => prev.map((m) => (
+      updateMessages((prev) => prev.map((m) => (
         m.id === assistantId
           ? { ...m, aiProvider: meta?.provider || m.aiProvider, aiModel: meta?.model || m.aiModel }
           : m
       )));
     })) {
-      setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, text: partial, streaming: true } : m)));
+      updateMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, text: partial, streaming: true } : m)));
     }
 
-    setMessages((prev) => prev.map((m) => (
+    updateMessages((prev) => prev.map((m) => (
       m.id === assistantId
         ? { 
             ...m, 
@@ -316,7 +321,7 @@ const AIMascotDrawer = memo(({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             onClick={() => setOpen(false)}
             style={{
               position: "fixed",
@@ -332,10 +337,10 @@ const AIMascotDrawer = memo(({
       <AnimatePresence>
         {open && (
           <motion.div
-            initial={{ scale: 0.85, opacity: 0, y: 20 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.85, opacity: 0, y: 20 }}
-            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                  initial={{ scale: 0.98, opacity: 0, y: 8 }}
+                  animate={{ scale: 1, opacity: 1, y: 0 }}
+                  exit={{ scale: 0.98, opacity: 0, y: 8 }}
+                  transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
             onPointerDown={startPanelDrag}
             onPointerMove={onPanelDragMove}
             onPointerUp={endPanelDrag}
@@ -428,7 +433,7 @@ const AIMascotDrawer = memo(({
               flexDirection: "column",
               gap: 8,
             }}>
-              {messages.length === 0 && (
+              {effectiveMessages.length === 0 && (
                 <div style={{
                   display: "flex",
                   flexDirection: "column",
@@ -475,7 +480,7 @@ const AIMascotDrawer = memo(({
                 </div>
               )}
 
-              {messages.map((m) => (
+              {effectiveMessages.map((m) => (
                 <div key={m.id} style={{
                   display: "flex",
                   flexDirection: "column",
@@ -510,14 +515,14 @@ const AIMascotDrawer = memo(({
                 </div>
               ))}
 
-              {messages.length > 0 && !sending && messages[messages.length - 1]?.role === "assistant" && (
+              {effectiveMessages.length > 0 && !sending && effectiveMessages[effectiveMessages.length - 1]?.role === "assistant" && (
                 <div style={{
                   display: "grid",
                   gap: 6,
                   gridTemplateColumns: "1fr",
                   marginTop: 6,
                 }}>
-                  {messages[messages.length - 1].followUps?.slice(0, 3).map((f) => (
+                  {effectiveMessages[effectiveMessages.length - 1].followUps?.slice(0, 3).map((f) => (
                     <button
                       key={f}
                       onClick={() => send(f)}
@@ -647,8 +652,8 @@ const AIMascotDrawer = memo(({
         onClick={() => {
           if (!dragMovedRef.current) setOpen((v) => !v);
         }}
-        whileHover={{ scale: open ? 1 : 1.06 }}
-        whileTap={{ scale: open ? 1 : 0.95 }}
+        whileHover={{ scale: open ? 1 : 1.03 }}
+        whileTap={{ scale: open ? 1 : 0.97 }}
         title={open ? "Schließen" : "AI Pilot öffnen"}
         style={{
           position: "fixed",
@@ -668,7 +673,7 @@ const AIMascotDrawer = memo(({
           animation: hasUnread && !open ? "mascot-wiggle 1.6s ease-in-out infinite" : "none",
           userSelect: "none",
           touchAction: "none",
-          transition: "background 0.2s, box-shadow 0.2s",
+          transition: "background 0.24s ease, box-shadow 0.24s ease, transform 0.24s ease",
           fontSize: 24,
           fontWeight: 700,
           color: C.t0,
@@ -680,7 +685,15 @@ const AIMascotDrawer = memo(({
           e.currentTarget.style.boxShadow = "0 8px 24px rgba(0, 0, 0, 0.2)";
         }}
       >
-        {open ? "✕" : "🤖"}
+        {open ? (
+          "✕"
+        ) : (
+          <img
+            src="/Notenpilot.png"
+            alt="AI Pilot"
+            style={{ width: 30, height: 30, objectFit: "contain", pointerEvents: "none" }}
+          />
+        )}
 
         {/* Unread badge */}
         {hasUnread && !open && (

@@ -274,28 +274,14 @@ const parseWeightFromPrompt = (prompt) => {
 
 const inferTypeFromPrompt = (prompt, grades = []) => {
   const p = String(prompt || "").toLowerCase();
-  const known = [
-    "schulaufgabe",
-    "kurztest",
-    "ausfrage",
-    "stegreifaufgabe",
-    "kurzarbeit",
-    ...grades.map((g) => String(g?.type || "").toLowerCase()).filter(Boolean),
-  ];
+  const known = [...new Set(grades.map((g) => String(g?.type || "").toLowerCase()).filter(Boolean))];
   return known.find((t) => t && p.includes(t)) || null;
 };
 
 const inferReplacedTypeFromPrompt = (prompt, grades = []) => {
   const p = String(prompt || "").toLowerCase();
   if (!(p.includes("statt") || p.includes("anstatt") || p.includes("ersetz") || p.includes("tausch"))) return null;
-  const known = [
-    "schulaufgabe",
-    "kurztest",
-    "ausfrage",
-    "stegreifaufgabe",
-    "kurzarbeit",
-    ...grades.map((g) => String(g?.type || "").toLowerCase()).filter(Boolean),
-  ];
+  const known = [...new Set(grades.map((g) => String(g?.type || "").toLowerCase()).filter(Boolean))];
   return known.find((t) => t && new RegExp(`(?:statt|anstatt)[^\\n]{0,30}${t}`, "i").test(p)) || null;
 };
 
@@ -567,7 +553,6 @@ const buildBackendPayload = (prompt, ctx, history = [], mode = "chat", options =
     firestoreSnapshot: {
       grades: ctx.grades,
       subjects: ctx.subjects,
-      fetchedAt: new Date().toISOString(),
     },
   },
   history: history

@@ -83,22 +83,27 @@ export const ScrollReveal = ({
     const el = containerRef.current; if (!el) return;
     const g = window.gsap, ST = window.ScrollTrigger;
     const scroller = scrollContainerRef?.current ?? window;
-    g.fromTo(el, { transformOrigin:"0% 50%", rotate: baseRotation }, {
-      ease:"none", rotate:0,
-      scrollTrigger:{ trigger:el, scroller, start:"top bottom", end:rotationEnd, scrub:true },
-    });
-    const wordElements = el.querySelectorAll(".sr-word");
-    g.fromTo(wordElements, { opacity: baseOpacity }, {
-      ease:"none", opacity:1, stagger:0.05,
-      scrollTrigger:{ trigger:el, scroller, start:"top bottom-=20%", end:wordAnimationEnd, scrub:true },
-    });
-    if (enableBlur) {
-      g.fromTo(wordElements, { filter:`blur(${blurStrength}px)` }, {
-        ease:"none", filter:"blur(0px)", stagger:0.05,
+    const ctx = g.context(() => {
+      g.fromTo(el, { transformOrigin:"0% 50%", rotate: baseRotation }, {
+        ease:"none", rotate:0,
+        scrollTrigger:{ trigger:el, scroller, start:"top bottom", end:rotationEnd, scrub:true },
+      });
+      const wordElements = el.querySelectorAll(".sr-word");
+      g.fromTo(wordElements, { opacity: baseOpacity }, {
+        ease:"none", opacity:1, stagger:0.05,
         scrollTrigger:{ trigger:el, scroller, start:"top bottom-=20%", end:wordAnimationEnd, scrub:true },
       });
-    }
-    return () => ST.getAll().forEach(t => t.kill());
+      if (enableBlur) {
+        g.fromTo(wordElements, { filter:`blur(${blurStrength}px)` }, {
+          ease:"none", filter:"blur(0px)", stagger:0.05,
+          scrollTrigger:{ trigger:el, scroller, start:"top bottom-=20%", end:wordAnimationEnd, scrub:true },
+        });
+      }
+    }, el);
+    return () => {
+      ctx.revert();
+      ST.refresh();
+    };
   }, [gsapLoaded, scrollContainerRef, enableBlur, baseOpacity, baseRotation, blurStrength, rotationEnd, wordAnimationEnd]);
   return (
     <h2 ref={containerRef} className={containerClassName}>
@@ -126,12 +131,17 @@ export const ScrollFloat = ({ children, className = "" }) => {
     if (!gsapLoaded) return;
     const el = containerRef.current; if (!el) return;
     const g = window.gsap, ST = window.ScrollTrigger;
-    const chars = el.querySelectorAll(".sf-inner");
-    g.fromTo(chars, { opacity:0, yPercent:110 }, {
-      opacity:1, yPercent:0, stagger:0.03,
-      scrollTrigger:{ trigger:el, start:"center bottom+=50%", end:"bottom bottom-=40%", scrub:true },
-    });
-    return () => ST.getAll().forEach(t => t.kill());
+    const ctx = g.context(() => {
+      const chars = el.querySelectorAll(".sf-inner");
+      g.fromTo(chars, { opacity:0, yPercent:110 }, {
+        opacity:1, yPercent:0, stagger:0.03,
+        scrollTrigger:{ trigger:el, start:"center bottom+=50%", end:"bottom bottom-=40%", scrub:true },
+      });
+    }, el);
+    return () => {
+      ctx.revert();
+      ST.refresh();
+    };
   }, [gsapLoaded]);
   return (
     <h2 ref={containerRef} className={className} style={{ display:"flex", flexWrap:"wrap" }}>

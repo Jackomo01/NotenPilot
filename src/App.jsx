@@ -107,8 +107,6 @@ function AppShell() {
   const [addOpen,     setAddOpen]     = useState(false);
   const [loading,     setLoading]     = useState(true);
   const [highlightId, setHighlightId] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [askedQuestions, setAskedQuestions] = useState([]);
   const [questionsRemaining, setQuestionsRemaining] = useState(DAILY_AI_PILOT_QUESTIONS);
   const [cloudSynced, setCloudSynced] = useState(false);
   const cloudReadyRef = useRef(false);
@@ -161,9 +159,12 @@ function AppShell() {
         }
 
         const remoteSig = JSON.stringify(remoteData);
+        const hasChanged = remoteSig !== lastCloudSigRef.current;
         lastCloudSigRef.current = remoteSig;
-        setGrades(remoteData.grades);
-        setSubjects(remoteData.subjects);
+        if (hasChanged) {
+          setGrades(remoteData.grades);
+          setSubjects(remoteData.subjects);
+        }
         cloudReadyRef.current = true;
         setCloudSynced(true);
       },
@@ -267,13 +268,13 @@ function AppShell() {
     }, 80);
   }, []);
 
-  const dockItems = [
+  const dockItems = useMemo(() => [
     { id:"dashboard", label:"Dashboard",    icon:Icons.dash,     onClick:()=>setPage("dashboard") },
     { id:"grades",    label:"Noten",        icon:Icons.notes,    onClick:()=>setPage("grades")    },
     { id:"add",       label:"+ Note",       icon:Icons.add,      onClick:()=>setAddOpen(true)     },
     { id:"stats",     label:"Statistiken",  icon:Icons.stats,    onClick:()=>setPage("stats")     },
     { id:"settings",  label:"Einstellungen",icon:Icons.settings, onClick:()=>setPage("settings")  },
-  ];
+  ], [setPage, setAddOpen]);
 
   const renderPage = () => {
     switch (page) {
@@ -298,10 +299,6 @@ function AppShell() {
             subjects={subjects} 
             user={user}
             cloudSynced={cloudSynced}
-            messages={messages}
-            setMessages={setMessages}
-            askedQuestions={askedQuestions}
-            setAskedQuestions={setAskedQuestions}
             questionsRemaining={questionsRemaining}
             setQuestionsRemaining={setQuestionsRemaining}
           />
@@ -327,7 +324,7 @@ function AppShell() {
             <div style={{ display:"flex", alignItems:"center", gap:10 }}>
               <SparkBtn onClick={() => setAddOpen(true)}>+ Note</SparkBtn>
               {user && (
-                <motion.button onClick={() => setPage("settings")} whileHover={{ scale:1.05 }}
+                <motion.button onClick={() => setPage("settings")} whileHover={{ scale:1.02 }}
                   style={{ width:30, height:30, borderRadius:"9999px", background:"#5b6ef025", border:"1px solid #5b6ef040", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:"#7585f4", fontFamily:"inherit" }}
                   title="Einstellungen"
                 >{(user.name||"?")[0].toUpperCase()}</motion.button>
