@@ -66,6 +66,7 @@ const OPENROUTER_API_KEY = env("OPENROUTER_API_KEY").trim();
 const OPENROUTER_BASE_URL = env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").replace(/\/$/, "");
 const HF_BASE_URL = env("HF_BASE_URL", "https://router.huggingface.co/v1").replace(/\/$/, "");
 const HF_TOKEN = env("HF_TOKEN", env("HF_API_KEY", "")).trim();
+const HF_TOKEN_SECONDARY = env("HF_TOKEN_2", env("HF_TOKEN_SECONDARY", "")).trim();
 const HF_MODEL = env("HF_MODEL", "Qwen/Qwen2.5-7B-Instruct").trim();
 const OPENROUTER_TIMEOUT_MS = Math.max(18000, Number(env("OPENROUTER_TIMEOUT_MS", "12000")));
 const HF_TIMEOUT_MS = Math.max(10000, Number(env("HF_TIMEOUT_MS", "4000")));
@@ -95,6 +96,12 @@ const isAllowedOpenRouterModel = (model) => {
   if (!value.includes("/")) return false;
   if (OPENROUTER_REQUIRE_FREE_MODELS && !isFreeModel(value)) return false;
   return true;
+};
+const normalizeHfKeySlot = (value) => (String(value).trim() === "2" ? 2 : 1);
+const getHuggingFaceTokenForSlot = (slot) => {
+  const normalizedSlot = normalizeHfKeySlot(slot);
+  if (normalizedSlot === 2) return HF_TOKEN_SECONDARY || null;
+  return HF_TOKEN || null;
 };
 const OPENROUTER_MODEL = env("OPENROUTER_MODEL", "qwen/qwen3.6-plus:free").trim();
 const OPENROUTER_FALLBACK_MODELS_STR = env("OPENROUTER_FALLBACK_MODELS", "qwen/qwen3.6-plus:free,nousresearch/hermes-3-llama-3.1-405b:free,qwen/qwen3-next-80b-a3b-instruct:free").trim();
@@ -354,13 +361,14 @@ const canonicalizeContextForKey = (context, prompt = "") => {
   };
 };
 
-const buildRequestKey = ({ mode, prompt, context, history, openrouterOnly }) => {
+const buildRequestKey = ({ mode, prompt, context, history, openrouterOnly, hfKeySlot }) => {
   const payload = {
     mode,
     prompt: String(prompt || ""),
     context: canonicalizeContextForKey(context, prompt),
     history: isDashboardInsightTask(prompt) ? [] : (Array.isArray(history) ? history : []),
     openrouterOnly: Boolean(openrouterOnly),
+    hfKeySlot: normalizeHfKeySlot(hfKeySlot),
   };
   return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 };
@@ -2229,9 +2237,12 @@ const callRoutewayOnce = async ({ prompt, context, history, mode }) => {
   return { answer, raw: data, model: ROUTEWAY_MODEL, provider: "routeway" };
 };
 
-const callHuggingFaceOnce = async ({ prompt, context, history, mode }) => {
-  if (!HF_TOKEN) {
-    throw new Error("HF_TOKEN fehlt. HuggingFace-Fallback kann nicht genutzt werden.");
+const callHuggingFaceOnce = async ({ prompt, context, history, mode, hfKeySlot }) => {
+  const normalizedSlot = normalizeHfKeySlot(hfKeySlot);
+  const hfToken = getHuggingFaceTokenForSlot(normalizedSlot);
+  if (!hfToken) {
+    const tokenName = normalizedSlot === 2 ? "HF_TOKEN_2 / HF_TOKEN_SECONDARY" : "HF_TOKEN / HF_API_KEY";
+    throw new Error(`${tokenName} fehlt. HuggingFace-Fallback kann nicht genutzt werden.`);
   }
 
   if (isModelInBackoff("huggingface", HF_MODEL)) {
@@ -2244,7 +2255,7 @@ const callHuggingFaceOnce = async ({ prompt, context, history, mode }) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${HF_TOKEN}`,
+        Authorization: `Bearer ${hfToken}`,
       },
       body: JSON.stringify({
         model: HF_MODEL,
@@ -2317,7 +2328,7 @@ const callHuggingFaceOnce = async ({ prompt, context, history, mode }) => {
     }
   }
 
-  return { answer, raw: data, model: HF_MODEL, provider: "huggingface-router" };
+  return { answer, raw: data, model: HF_MODEL, provider: "huggingface-router", hfKeySlot: normalizedSlot };
 };
 
 const isLikelyTruncated = (raw, answer) => {
@@ -2574,9 +2585,10 @@ const createResponseCollector = () => {
   };
 };
 
-const callOpenRouter = async ({ prompt, context, history, mode, openrouterOnly = false }) => {
+const callOpenRouter = async ({ prompt, context, history, mode, openrouterOnly = false, hfKeySlot = 1 }) => {
   const safeContext = ensureFirestoreSnapshot(context);
   const openrouterOnlyMode = AI_FORCE_OPENROUTER_ONLY || openrouterOnly;
+  const normalizedHfKeySlot = normalizeHfKeySlot(hfKeySlot);
   const collector = createResponseCollector();
 
   const buildNoSafeFallbackResult = (reason) => {
@@ -2634,14 +2646,14 @@ const callOpenRouter = async ({ prompt, context, history, mode, openrouterOnly =
 
   if (!openrouterOnlyMode) {
     // 1) Primary provider: HuggingFace
-    const canUseHf = HF_FALLBACK_ENABLED && !!HF_TOKEN;
+    const canUseHf = HF_FALLBACK_ENABLED && !!getHuggingFaceTokenForSlot(normalizedHfKeySlot);
     if (canUseHf && shouldFallbackToHuggingFace()) {
-      console.log(`[AI ROUTING] Trying HuggingFace (${HF_MODEL})...`);
+      console.log(`[AI ROUTING] Trying HuggingFace (${HF_MODEL}) slot=${normalizedHfKeySlot}...`);
       const startedAt = Date.now();
       try {
         const hf = await withThrottle(() => withTimeoutRetry(
           "HuggingFace",
-          () => callHuggingFaceOnce({ prompt, context: safeContext, history, mode }),
+          () => callHuggingFaceOnce({ prompt, context: safeContext, history, mode, hfKeySlot: normalizedHfKeySlot }),
           HF_TIMEOUT_MS
         ));
         const latencyMs = Date.now() - startedAt;
@@ -2654,7 +2666,7 @@ const callOpenRouter = async ({ prompt, context, history, mode, openrouterOnly =
             latencyMs,
             orderIndex: 0,
           });
-          console.log(`[AI ROUTING] HuggingFace succeeded.`);
+          console.log(`[AI ROUTING] HuggingFace succeeded (slot=${normalizedHfKeySlot}).`);
           const selected = maybeReturnCollected("hf-success");
           if (selected) return selected;
         }
@@ -2675,7 +2687,7 @@ const callOpenRouter = async ({ prompt, context, history, mode, openrouterOnly =
           error: msg,
           latencyMs,
         });
-        console.warn(`[AI ROUTING] HuggingFace failed -> fallback OpenRouter (${msg})`);
+        console.warn(`[AI ROUTING] HuggingFace failed -> fallback OpenRouter (slot=${normalizedHfKeySlot}, ${msg})`);
         errors.push(`huggingface: ${msg}`);
       }
     }
@@ -2949,22 +2961,25 @@ const server = http.createServer(async (req, res) => {
     }
 
     const context = buildServerContext(payload?.context);
+    const requestOpenrouterOnly = parseBoolean(payload?.openrouterOnly, false);
+    const requestHfKeySlot = normalizeHfKeySlot(payload?.hfKeySlot);
 
     const inputLog = {
       mode,
       prompt,
       context,
       history: Array.isArray(payload?.history) ? payload.history : [],
+      hfKeySlot: requestHfKeySlot,
     };
     console.log(`[AI INPUT ${new Date().toISOString()}] ${toSafeJsonLog(inputLog)}`);
 
-    const requestOpenrouterOnly = parseBoolean(payload?.openrouterOnly, false);
     const requestKey = buildRequestKey({
       mode,
       prompt,
       context,
       history: payload?.history,
       openrouterOnly: requestOpenrouterOnly,
+      hfKeySlot: requestHfKeySlot,
     });
 
     const immediateCached = getRecentSuccess(requestKey);
@@ -2990,6 +3005,7 @@ const server = http.createServer(async (req, res) => {
         history: payload?.history,
         mode,
         openrouterOnly: requestOpenrouterOnly,
+        hfKeySlot: requestHfKeySlot,
       });
 
       // Never discard a known-good answer for the same exact request key.
@@ -3043,7 +3059,9 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   const geminiMode = GEMINI_API_KEY ? `enabled (${GEMINI_MODEL})` : "disabled";
   const routewayMode = ROUTEWAY_API_KEY ? `enabled (${ROUTEWAY_MODEL})` : "disabled";
-  const hfMode = HF_FALLBACK_ENABLED && HF_TOKEN ? `enabled (${HF_MODEL})` : "disabled";
+  const hfMode = HF_FALLBACK_ENABLED && (HF_TOKEN || HF_TOKEN_SECONDARY)
+    ? `enabled (${HF_MODEL}, slot1=${HF_TOKEN ? "yes" : "no"}, slot2=${HF_TOKEN_SECONDARY ? "yes" : "no"})`
+    : "disabled";
   const safeMode = AI_SAFE_FALLBACK_ENABLED ? "enabled" : "disabled";
   const forceOpenRouterMode = AI_FORCE_OPENROUTER_ONLY ? "enabled" : "disabled";
   console.log(`AI proxy listening on http://localhost:${PORT}/ai (Routeway: ${routewayMode}, HF: ${hfMode}, OpenRouter free-only=${OPENROUTER_REQUIRE_FREE_MODELS}, Gemini: ${geminiMode}, Safe fallback: ${safeMode}, Force OpenRouter-only: ${forceOpenRouterMode})`);

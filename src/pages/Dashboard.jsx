@@ -347,7 +347,7 @@ const Dashboard = memo(({ loading, user, cloudSynced = false }) => {
       {/* Charts row */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 300px", gap:12 }}>
         <Card pad="22px">
-          <div style={{ fontSize:13, fontWeight:600, color:C.t0, marginBottom:16 }}>Notenverlauf</div>
+          <div style={{ fontSize:13, fontWeight:600, color:C.t0, marginBottom:16 }}>Leistungskurve</div>
           {trend.length >= 2 ? (
             <NoteChart data={trend} avgColor={avgColor} height={220}/>
           ) : (

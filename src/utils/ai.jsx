@@ -15,7 +15,10 @@ const AI_ALLOW_RULE_FALLBACK = (import.meta.env.VITE_AI_ALLOW_RULE_FALLBACK || "
 const BACKEND_TIMEOUT_MS = Math.max(15000, Number(import.meta.env.VITE_AI_TIMEOUT_MS || "60000"));
 export const AI_REQUEST_COOLDOWN_MS = 7000;
 export const AI_OPENROUTER_ONLY_KEY = "np6_ai_openrouter_only";
+export const AI_HF_KEY_SLOT_KEY = "np6_ai_hf_key_slot";
 const aiCooldownUntilByKey = new Map();
+
+const normalizeHfKeySlot = (value) => (String(value).trim() === "2" ? 2 : 1);
 
 export const getAIRequestCooldownRemainingMs = (key = "global") => {
   const until = aiCooldownUntilByKey.get(String(key || "global"));
@@ -36,13 +39,38 @@ export const waitForAICooldown = async (key = "global", cooldownMs = AI_REQUEST_
 };
 
 export const isOpenRouterOnlyEnabled = () => db.get(AI_OPENROUTER_ONLY_KEY, false) === true;
+export const getAIHuggingFaceKeySlot = () => normalizeHfKeySlot(db.get(AI_HF_KEY_SLOT_KEY, 1));
 
 const toNum = (v) => {
   const n = parseFloat(String(v).replace(",", "."));
   return Number.isFinite(n) ? n : null;
 };
 
-const isFollowUpPrompt = () => false;
+const isFollowUpPrompt = (prompt = "") => {
+  const p = String(prompt || "").trim().toLowerCase();
+  if (!p) return false;
+
+  if (p.length <= 18) return true;
+
+  const followUpMarkers = [
+    /^und\b/,
+    /^dann\b/,
+    /^davon\b/,
+    /^dazu\b/,
+    /^deshalb\b/,
+    /^warum\b/,
+    /^wieso\b/,
+    /^wie\s+denn\b/,
+    /^was\s+ist\s+dann\b/,
+    /^und\s+was\b/,
+    /^wie\s+ist\s+es\s+mit\b/,
+    /\b(das|dies|diese|der|die|das)\b/,
+    /\b(dort|da|dabei|damit|daran|darauf)\b/,
+    /\b(auch|noch|weiter|mehr|genauer|genaueres)\b/,
+  ];
+
+  return followUpMarkers.some((marker) => marker.test(p));
+};
 
 const resolvePromptWithHistory = (prompt, history = []) => {
   if (!isFollowUpPrompt(prompt)) return prompt;
@@ -541,6 +569,7 @@ const backendUnavailableText = (err) => {
 const buildBackendPayload = (prompt, ctx, history = [], mode = "chat", options = {}) => ({
   mode,
   openrouterOnly: Boolean(options.openrouterOnly),
+  hfKeySlot: normalizeHfKeySlot(options.hfKeySlot ?? getAIHuggingFaceKeySlot()),
   prompt,
   context: {
     average: ctx.average,
@@ -625,7 +654,8 @@ export const getAIProvider = () => (AI_ENDPOINT ? (AI_PROVIDER || "backend") : "
 
 export const quickAskDetailed = async (prompt, ctx, onProgress, history = []) => {
   try {
-    const backend = await requestBackendAI(buildBackendPayload(prompt, ctx, history, "quick", {
+    const resolvedPrompt = resolvePromptWithHistory(prompt, history);
+    const backend = await requestBackendAI(buildBackendPayload(resolvedPrompt, ctx, history, "quick", {
       openrouterOnly: isOpenRouterOnlyEnabled(),
     }));
     if (backend?.answer) return backend;
@@ -703,12 +733,29 @@ export async function* streamChatAnswer(prompt, ctx, history = [], onProgress, o
 
 export const DASHBOARD_INSIGHT_PROMPT = [
   "[TASK:dashboard_insight]",
-  "Erstelle einen prägnanten, aber tiefgehenden Dashboard-Insight auf Basis des übergebenen Kontexts.",
-  "Finde Muster, die nicht auf den ersten Blick sichtbar sind (z. B. Konsistenz, Risiko-Cluster, Fach-/Typ-Diskrepanz, Wendepunkte).",
-  "Vermeide reine Wiederholung offensichtlicher Zahlen und Labels.",
-  "Gib stattdessen Interpretation + Ursache + konkrete Folge für die nächsten 2 Wochen.",
-  "Form: 4-6 Sätze, klar und direkt, ohne Bulletpoints.",
-  "Nenne am Ende genau einen priorisierten Hebel (konkrete Handlung mit erwarteter Wirkung).",
+  "You are generating a short AI insight for a German school grade tracking app called 'NotenPilot'.",
+  "",
+  "The user provides: subject names, grades, grade types, weights, dates.",
+  "",
+  "Generate exactly ONE insight in German. Rules:",
+  "- Write exactly 2–3 short sentences.",
+  "- Only use information that can actually be inferred from the provided data.",
+  "- You may mention subject names and grade type names directly.",
+  "- Do NOT mention exact grades, averages, numbers, percentages, rankings, or calculations.",
+  "- Do NOT mention exact dates.",
+  "- Do NOT reinterpret grade types into other concepts (not 'important', 'short-term', 'stressful', 'large', or 'small').",
+  "- Do NOT assume psychological explanations (motivation, stress, intelligence, discipline, learning behavior).",
+  "- Do NOT classify subjects into categories (scientific, linguistic, creative, difficult, easy).",
+  "- Focus on subtle patterns, trends, consistency, fluctuations, or differences over time.",
+  "- Avoid generic or obvious statements.",
+  "- The insight should feel modern, clean, and observational (similar to Spotify Wrapped or modern productivity apps).",
+  "- Keep the wording natural and concise.",
+  "- Do not praise or criticize the student.",
+  "- Avoid corporate, academic, or overly analytical language.",
+  "- Do NOT use phrases like: 'dies deutet darauf hin', 'möglicherweise', 'weist darauf hin', 'Performance', 'signifikant', 'impliziert'.",
+  "- Prefer direct, natural observations.",
+  "",
+  "Output only the insight in German (exactly 2–3 sentences).",
 ].join("\n");
 
 
@@ -722,27 +769,6 @@ const normalizeInsightText = (text) => String(text || "").replace(/\s+/g, " ").t
 
 export const normalizeDashboardInsight = (text) => {
   const cleaned = normalizeInsightText(text);
-  const lowered = cleaned.toLowerCase();
-  const forbidden = [
-    "gesamtdurchschnitt",
-    "durchschnitt",
-    "schnitt",
-    "anzahl",
-    "noten gesamt",
-    "beste fach",
-    "bestes fach",
-    "starkstes fach",
-    "worst",
-    "schwachstes fach",
-  ];
-  if (forbidden.some((k) => lowered.includes(k))) return "";
-
-  const hasContradiction =
-    ((lowered.includes("stabil") || lowered.includes("ruhig")) &&
-      (lowered.includes("schwanken deutlich") || lowered.includes("stark schwank") || lowered.includes("sehr wechselhaft"))) ||
-    (lowered.includes("eindeutig besser") && lowered.includes("eindeutig schlechter"));
-  if (hasContradiction) return "";
-
   return cleaned;
 };
 

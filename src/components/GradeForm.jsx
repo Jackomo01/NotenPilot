@@ -182,7 +182,7 @@ const GradeForm = memo(({ onClose, editItem }) => {
       <HR />
       <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginTop:16 }}>
         <SparkBtn variant="ghost" onClick={onClose}>Abbrechen</SparkBtn>
-        <SparkBtn onClick={submit}>{editItem ? "Änderungen speichern" : "Note speichern"}</SparkBtn>
+        <SparkBtn onClick={submit}>{editItem ? "Änderungen speichern" : "Hinzufügen"}</SparkBtn>
       </div>
     </div>
   );

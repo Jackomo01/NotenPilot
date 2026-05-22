@@ -344,7 +344,7 @@ function AppShell() {
         </div>
       )}
 
-      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Neue Note hinzufügen">
+      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Note eintragen">
         <GradeForm onClose={() => setAddOpen(false)}/>
       </Modal>
     </AppCtx.Provider>

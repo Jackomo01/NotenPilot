@@ -9,7 +9,7 @@ import { C, R, ARTEN } from "../utils/tokens.jsx";
 import { SparkBtn, Card, Lbl, HR, Bdg, SelInp, Modal } from "../components/ui.jsx";
 import { ChartTip } from "../components/ui.jsx";
 import GradeForm from "../components/GradeForm.jsx";
-import { AI_OPENROUTER_ONLY_KEY } from "../utils/ai.jsx";
+import { AI_HF_KEY_SLOT_KEY, AI_OPENROUTER_ONLY_KEY } from "../utils/ai.jsx";
 
 
 
@@ -424,6 +424,7 @@ export const StatsPage = memo(() => {
 export const SettingsPage = memo(({ user, onLogout }) => {
   const { grades, setGrades, subjects, setSubjects } = useApp();
   const [confirm, setConfirm] = useState(false);
+  const [hfKeySlot, setHfKeySlot] = useLS(AI_HF_KEY_SLOT_KEY, 1);
   const [openRouterOnly, setOpenRouterOnly] = useLS(AI_OPENROUTER_ONLY_KEY, false);
   const toast = useToast();
 
@@ -457,40 +458,45 @@ export const SettingsPage = memo(({ user, onLogout }) => {
         </Card>
 
         <div style={{display:"grid",gap:16,alignContent:"start"}}>
-          <Card pad="22px">
+          <Card
+            pad="22px"
+            style={{
+              background:C.bg2,
+              borderColor:C.line,
+            }}
+          >
             <div style={{fontSize:14,fontWeight:600,color:C.t0,marginBottom:8}}>AI Routing</div>
-            <div style={{fontSize:12,color:C.t1,marginBottom:12}}>Testweise nur OpenRouter-Antworten zulassen und alle Fallback-Provider überspringen.</div>
-            <button
-              type="button"
-              onClick={() => {
-                setOpenRouterOnly((prev) => !prev);
-                toast(openRouterOnly ? "OpenRouter-only deaktiviert." : "OpenRouter-only aktiviert.");
-              }}
-              style={{
-                display:"inline-flex",
-                alignItems:"center",
-                gap:10,
-                padding:"10px 14px",
-                borderRadius:R.s,
-                border:`1px solid ${openRouterOnly ? C.acc : C.line}`,
-                background: openRouterOnly ? `${C.acc}18` : C.bg4,
-                color:C.t0,
-                cursor:"pointer",
-                fontFamily:"inherit",
-                fontSize:13,
-                fontWeight:600,
-              }}
-            >
-              <span style={{
-                width:12,
-                height:12,
-                borderRadius:999,
-                background: openRouterOnly ? C.acc : C.line,
-                boxShadow: openRouterOnly ? `0 0 0 4px ${C.acc}22` : "none",
-                transition:"all 0.15s ease",
-              }} />
-              {openRouterOnly ? "Nur OpenRouter aktiv" : "OpenRouter-only einschalten"}
-            </button>
+            <div style={{fontSize:12,color:C.t1,marginBottom:14}}>OpenRouter und HuggingFace manuell umschalten.</div>
+
+            <div style={{display:"grid",gap:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:600,color:C.t0}}>OpenRouter only</div>
+                  <div style={{fontSize:12,color:C.t1,marginTop:3}}>Fallback aus.</div>
+                </div>
+                <SparkBtn
+                  variant={openRouterOnly ? "primary" : "subtle"}
+                  onClick={() => {
+                    setOpenRouterOnly((prev) => !prev);
+                    toast(openRouterOnly ? "OpenRouter-only deaktiviert." : "OpenRouter-only aktiviert.");
+                  }}
+                >
+                  {openRouterOnly ? "On" : "Off"}
+                </SparkBtn>
+              </div>
+
+              <div style={{display:"grid",gap:6}}>
+                <div style={{fontSize:13,fontWeight:600,color:C.t0}}>HF Slot</div>
+                <SelInp
+                  value={String(hfKeySlot || 1)}
+                  onChange={(e) => setHfKeySlot(e.target.value === "2" ? 2 : 1)}
+                  options={[
+                    { value: "1", label: "Slot 1 - HF_TOKEN" },
+                    { value: "2", label: "Slot 2 - HF_TOKEN_2" },
+                  ]}
+                />
+              </div>
+            </div>
           </Card>
 
           <Card pad="22px">
