@@ -181,17 +181,18 @@ const AIPage = memo(({
             <div style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: 6,
+              gap: 8,
               marginTop: 4,
-              fontSize: 10,
+              fontSize: 11,
               fontWeight: 700,
               color: C.acc,
               background: `${C.acc}18`,
               border: `1px solid ${C.acc}30`,
               borderRadius: R.f,
-              padding: "3px 8px",
+              padding: "4px 8px",
             }}>
-              Nur OpenRouter aktiv
+              <span style={{width:10,height:10,display:"inline-block",borderRadius:999,background:C.acc,boxShadow:`0 0 0 4px ${C.accGlow}`}} />
+              <span>Nur OpenRouter aktiv</span>
             </div>
           )}
           {!!engineProgress && <p style={{ fontSize: 11, color: C.t2, marginTop: 4 }}>{engineProgress}</p>}

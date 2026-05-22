@@ -458,43 +458,83 @@ export const SettingsPage = memo(({ user, onLogout }) => {
         </Card>
 
         <div style={{display:"grid",gap:16,alignContent:"start"}}>
-          <Card
-            pad="22px"
-            style={{
-              background:C.bg2,
-              borderColor:C.line,
-            }}
-          >
+          <Card pad="22px" style={{background:C.bg2,borderColor:C.line,boxSizing:"border-box"}}>
             <div style={{fontSize:14,fontWeight:600,color:C.t0,marginBottom:8}}>AI Routing</div>
-            <div style={{fontSize:12,color:C.t1,marginBottom:14}}>OpenRouter und HuggingFace manuell umschalten.</div>
+            <div style={{fontSize:12,color:C.t1,marginBottom:14,lineHeight:1.5}}>Testweise nur OpenRouter-Antworten zulassen und alle Fallback-Provider überspringen.</div>
 
             <div style={{display:"grid",gap:14}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
-                <div>
-                  <div style={{fontSize:13,fontWeight:600,color:C.t0}}>OpenRouter only</div>
-                  <div style={{fontSize:12,color:C.t1,marginTop:3}}>Fallback aus.</div>
-                </div>
-                <SparkBtn
-                  variant={openRouterOnly ? "primary" : "subtle"}
+              <div style={{display:"flex",justifyContent:"flex-start",alignItems:"center",gap:12}}>
+                <button
                   onClick={() => {
                     setOpenRouterOnly((prev) => !prev);
                     toast(openRouterOnly ? "OpenRouter-only deaktiviert." : "OpenRouter-only aktiviert.");
                   }}
+                  aria-pressed={openRouterOnly}
+                  style={{
+                    background: openRouterOnly ? C.accDim : 'transparent',
+                    border: `1.5px solid ${openRouterOnly ? C.accH : '#3a4a7a'}`,
+                    borderRadius: R.s,
+                    padding: '8px 14px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    cursor: 'pointer',
+                    transition: 'background 180ms ease, border-color 180ms ease, box-shadow 180ms ease',
+                  }}
+                  onMouseEnter={(e)=>{e.currentTarget.style.boxShadow = openRouterOnly ? `0 8px 20px ${C.accGlow}` : `0 8px 18px rgba(28,28,46,0.04)`}}
+                  onMouseLeave={(e)=>{e.currentTarget.style.boxShadow = 'none'}}
                 >
-                  {openRouterOnly ? "On" : "Off"}
-                </SparkBtn>
+                  <span style={{
+                    width:10,
+                    height:10,
+                    borderRadius:999,
+                    display:'inline-block',
+                    background: openRouterOnly ? C.acc : '#24303f',
+                    boxShadow: openRouterOnly ? `0 0 0 6px ${C.accGlow}` : 'none',
+                    border: openRouterOnly ? 'none' : `1.2px solid ${C.line}`
+                  }} />
+                  <span style={{fontSize:14,fontWeight:500,color: openRouterOnly ? C.t0 : C.t1}}>Nur OpenRouter aktiv</span>
+                </button>
               </div>
 
               <div style={{display:"grid",gap:6}}>
                 <div style={{fontSize:13,fontWeight:600,color:C.t0}}>HF Slot</div>
-                <SelInp
-                  value={String(hfKeySlot || 1)}
-                  onChange={(e) => setHfKeySlot(e.target.value === "2" ? 2 : 1)}
-                  options={[
-                    { value: "1", label: "Slot 1 - HF_TOKEN" },
-                    { value: "2", label: "Slot 2 - HF_TOKEN_2" },
-                  ]}
-                />
+                <div style={{display:"flex",gap:8}}>
+                  {[{value:1,label:"HF Slot 1"},{value:2,label:"HF Slot 2"}].map(s => (
+                    <button
+                      key={s.value}
+                      onClick={() => { setHfKeySlot(s.value); toast(`HF Slot ${s.value} ausgewählt.`); }}
+                      aria-pressed={hfKeySlot === s.value}
+                      style={{
+                        padding: '8px 12px',
+                        borderRadius: R.s,
+                        border: `1.5px solid ${hfKeySlot === s.value ? C.accH : C.line}`,
+                        background: hfKeySlot === s.value ? C.accDim : 'transparent',
+                        color: hfKeySlot === s.value ? C.t0 : C.t1,
+                        cursor: 'pointer',
+                        fontSize: 13,
+                        fontWeight: 500,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        transition: 'all 140ms ease',
+                      }}
+                      onMouseEnter={(e)=>{ if(hfKeySlot === s.value) e.currentTarget.style.boxShadow = `0 8px 20px ${C.accGlow}`; else e.currentTarget.style.boxShadow = '0 6px 14px rgba(28,28,46,0.04)'}}
+                      onMouseLeave={(e)=>{ e.currentTarget.style.boxShadow = 'none' }}
+                    >
+                      <span style={{
+                        width:10,
+                        height:10,
+                        borderRadius:999,
+                        display:'inline-block',
+                        background: hfKeySlot === s.value ? C.acc : '#24303f',
+                        boxShadow: hfKeySlot === s.value ? `0 0 0 6px ${C.accGlow}` : 'none',
+                        border: hfKeySlot === s.value ? 'none' : `1.2px solid ${C.line}`
+                      }} />
+                      <span style={{fontSize:14,fontWeight:500,color: hfKeySlot === s.value ? C.t0 : C.t1}}>{s.label}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </Card>
