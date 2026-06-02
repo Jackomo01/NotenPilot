@@ -456,7 +456,7 @@ const Landing = memo(({ onLogin, onRegister }) => {
             <div style={{ fontSize:11, color:C.t1, lineHeight:1.55, marginBottom:8 }}>
               „Welche Note brauche ich für 1,5 in Mathe?"
             </div>
-            <div style={{ fontSize:10, color:C.accH, fontWeight:600, padding:"3px 9px", background:`${C.acc}18`, borderRadius:R.f, display:"inline-block" }}>Antwort berechnen →</div>
+            <div style={{ fontSize:10, color:C.accH, fontWeight:600, padding:"3px 9px", background:`${C.acc}18`, borderRadius:R.f, display:"inline-block" }}>Antwort berechnen&nbsp;→</div>
           </motion.div>
         </motion.div>
 
