@@ -52,6 +52,36 @@ const FEATURES = [
   },
 ];
 
+const HOW_IT_WORKS = [
+  {
+    title: "Noten erfassen",
+    body: "Trage deine Schulnoten, Gewichtungen und Fächer in wenigen Klicks ein. Die App bleibt dabei bewusst schnell und simpel.",
+  },
+  {
+    title: "Schnitt verstehen",
+    body: "Notenpilot berechnet deinen Notendurchschnitt automatisch und zeigt dir, welche Fächer deinen Schnitt am stärksten bewegen.",
+  },
+  {
+    title: "Gezielt verbessern",
+    body: "Trends, Diagramme und KI-gestützte Hinweise helfen dir dabei, früh zu sehen, wo sich Lernen am meisten lohnt.",
+  },
+];
+
+const FAQ = [
+  {
+    q: "Kann ich meinen Notendurchschnitt berechnen lassen?",
+    a: "Ja. Notenpilot berechnet den gewichteten Notendurchschnitt automatisch, sobald du deine Noten und Gewichtungen einträgst.",
+  },
+  {
+    q: "Ist Notenpilot nur für Schüler gedacht?",
+    a: "Die App ist für Schüler gebaut, eignet sich aber auch für alle, die Fächer, Leistungen und Entwicklungen übersichtlich verfolgen möchten.",
+  },
+  {
+    q: "Brauche ich ein Abo?",
+    a: "Nein. Der Einstieg ist kostenlos und ohne versteckte Kosten gedacht.",
+  },
+];
+
 // ─── Custom cursor ────────────────────────────────────────────────────────────
 const CustomCursor = () => {
   const ringRef = useRef(null);
@@ -200,6 +230,103 @@ const SparkLink = ({ children, onClick, variant = "primary", size = "lg" }) => (
     <SparkBtn variant={variant} size={size} onClick={onClick}>{children}</SparkBtn>
   </ClickSpark>
 );
+
+const SectionHeading = ({ kicker, title, body }) => {
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const obs = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) setVisible(true);
+    }, { threshold: 0.15 });
+
+    if (ref.current) obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, []);
+
+  return (
+    <div ref={ref} style={{ textAlign:"center", marginBottom:36 }}>
+      <motion.div initial={{ opacity:0, y:18 }} animate={visible ? { opacity:1, y:0 } : {}} transition={{ duration:0.45 }} style={{ fontSize:11, color:C.accH, fontWeight:800, letterSpacing:"0.14em", textTransform:"uppercase", marginBottom:10 }}>
+        {kicker}
+      </motion.div>
+      <motion.h2 initial={{ opacity:0, y:18 }} animate={visible ? { opacity:1, y:0 } : {}} transition={{ duration:0.45, delay:0.05 }} style={{ fontSize:"clamp(28px,4vw,44px)", fontWeight:900, letterSpacing:"-0.04em", color:C.t0, lineHeight:1.08, marginBottom:14 }}>
+        {title}
+      </motion.h2>
+      <motion.p initial={{ opacity:0, y:12 }} animate={visible ? { opacity:1, y:0 } : {}} transition={{ duration:0.45, delay:0.1 }} style={{ fontSize:16, color:C.t1, maxWidth:620, margin:"0 auto", lineHeight:1.7 }}>
+        {body}
+      </motion.p>
+    </div>
+  );
+};
+
+const FAQAccordion = ({ items }) => {
+  const [openIndex, setOpenIndex] = useState(0);
+
+  return (
+    <div style={{ maxWidth:1000, margin:"0 auto", borderTop:`1px solid ${C.line}`, borderBottom:`1px solid ${C.line}` }}>
+      {items.map((item, index) => {
+        const open = index === openIndex;
+
+        return (
+          <div key={item.q} style={{ borderBottom:index === items.length - 1 ? "none" : `1px solid ${C.line}` }}>
+            <button
+              type="button"
+              onClick={() => setOpenIndex(open ? -1 : index)}
+              aria-expanded={open}
+              style={{
+                width:"100%",
+                display:"flex",
+                alignItems:"center",
+                justifyContent:"space-between",
+                gap:24,
+                background:"transparent",
+                border:"none",
+                color:"inherit",
+                padding:"22px 0",
+                cursor:"pointer",
+                textAlign:"left",
+              }}
+            >
+              <span style={{ fontSize:"clamp(20px, 2.4vw, 24px)", fontWeight:800, color:C.t0, lineHeight:1.2, maxWidth:760 }}>
+                {item.q}
+              </span>
+              <span style={{
+                width:46,
+                height:46,
+                borderRadius:"50%",
+                flexShrink:0,
+                display:"inline-flex",
+                alignItems:"center",
+                justifyContent:"center",
+                background:C.bg4,
+                border:`1px solid ${C.lineH}`,
+                color:C.t0,
+                fontSize:28,
+                lineHeight:1,
+                fontWeight:300,
+              }}>
+                {open ? "×" : "+"}
+              </span>
+            </button>
+
+            <motion.div
+              initial={false}
+              animate={{ height: open ? "auto" : 0, opacity: open ? 1 : 0 }}
+              transition={{ duration:0.22, ease:"easeOut" }}
+              style={{ overflow:"hidden" }}
+            >
+              <div style={{ padding:"0 0 22px 0", maxWidth:840 }}>
+                <p style={{ fontSize:15, color:C.t1, lineHeight:1.75, maxWidth:880 }}>
+                  {item.a}
+                </p>
+              </div>
+            </motion.div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 // ─── Mock preview ─────────────────────────────────────────────────────────────
 const MockPreview = ({ vis }) => {
@@ -548,6 +675,42 @@ const Landing = memo(({ onLogin, onRegister }) => {
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
           {FEATURES.map((f, i) => <FeatureCard key={i} f={f} i={i} />)}
         </div>
+      </div>
+
+      {/* HOW IT WORKS */}
+      <div style={{ maxWidth:1100, margin:"0 auto", padding:"0 60px 96px" }}>
+        <SectionHeading
+          kicker="So funktioniert es"
+          title="Vom Eintragen zur klaren Analyse in drei Schritten"
+          body="Die Seite ist bewusst auf die Suche nach Hilfe bei Notendurchschnitt, Notenverwaltung und Leistungsübersicht ausgerichtet."
+        />
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:18 }}>
+          {HOW_IT_WORKS.map((item, index) => (
+            <motion.div
+              key={item.title}
+              initial={{ opacity:0, y:24 }}
+              whileInView={{ opacity:1, y:0 }}
+              viewport={{ once:true, amount:0.2 }}
+              transition={{ duration:0.45, delay:index * 0.08 }}
+              style={{ background:C.bg2, border:`1px solid ${C.line}`, borderRadius:R.xl, padding:"28px 24px", position:"relative", overflow:"hidden" }}
+            >
+              <div style={{ position:"absolute", inset:"auto -20px -20px auto", width:140, height:140, borderRadius:"50%", background:`radial-gradient(circle, ${C.acc}12, transparent 70%)`, pointerEvents:"none" }} />
+              <div style={{ fontSize:12, color:C.accH, fontWeight:800, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:10 }}>0{index + 1}</div>
+              <div style={{ fontSize:18, fontWeight:800, color:C.t0, marginBottom:10, letterSpacing:"-0.02em" }}>{item.title}</div>
+              <div style={{ fontSize:14, color:C.t1, lineHeight:1.75 }}>{item.body}</div>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+
+      {/* FAQ */}
+      <div style={{ maxWidth:1100, margin:"0 auto", padding:"0 60px 96px" }}>
+        <SectionHeading
+          kicker="Häufige Fragen"
+          title="Kurze Antworten auf die wichtigsten Suchanfragen"
+          body="Diese Fragen decken die typischen Informationsbedürfnisse rund um Schulnoten, App-Nutzen und Kosten ab."
+        />
+        <FAQAccordion items={FAQ} />
       </div>
 
       {/* CTA */}

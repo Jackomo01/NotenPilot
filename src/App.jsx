@@ -54,6 +54,11 @@ const getMsUntilNextBerlinMidnight = () => {
   return Math.max(60_000, nextBerlinMidnight - currentBerlinTime + 1_000);
 };
 
+const setHeadMeta = (selector, value) => {
+  const node = document.querySelector(selector);
+  if (node) node.setAttribute("content", value);
+};
+
 const GlobalStyles = () => (
   <style>{`
     @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&display=swap');
@@ -111,6 +116,31 @@ function AppShell() {
   const [cloudSynced, setCloudSynced] = useState(false);
   const cloudReadyRef = useRef(false);
   const lastCloudSigRef = useRef("");
+
+  useEffect(() => {
+    const metaByView = {
+      landing: {
+        title: "Notenpilot | Schulnoten und Notendurchschnitt im Blick",
+        description: "Notenpilot ist die kostenlose Schulnoten-App für Notendurchschnitt, Fächer und Leistungen. Behalte deine Schulnoten modern und übersichtlich im Blick.",
+      },
+      auth: {
+        title: "Anmelden | Notenpilot",
+        description: "Melde dich bei Notenpilot an, um deine Schulnoten, Fächer und Auswertungen weiterzuführen.",
+      },
+      app: {
+        title: "Dashboard | Notenpilot",
+        description: "Verwalte Schulnoten, analysiere deinen Schnitt und behalte deine Leistungen in Notenpilot im Blick.",
+      },
+    };
+
+    const nextMeta = metaByView[view] ?? metaByView.landing;
+    document.title = nextMeta.title;
+    setHeadMeta('meta[name="description"]', nextMeta.description);
+    setHeadMeta('meta[property="og:title"]', nextMeta.title);
+    setHeadMeta('meta[property="og:description"]', nextMeta.description);
+    setHeadMeta('meta[name="twitter:title"]', nextMeta.title);
+    setHeadMeta('meta[name="twitter:description"]', nextMeta.description);
+  }, [view]);
 
   const refreshQuestionQuota = useCallback(async () => {
     if (!user?.uid) return;
