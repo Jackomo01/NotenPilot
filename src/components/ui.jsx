@@ -16,7 +16,7 @@ export const SparkBtn = memo(({ children, onClick, variant="primary", size="md",
   const fs = { sm:11, md:13, lg:14 };
   const v = {
     primary:{ bg:C.acc,        color:"#fff",  border:C.acc,      sc:C.accH    },
-    ghost:  { bg:"transparent", color:C.t1,   border:C.line,     sc:C.acc     },
+    ghost:  { bg:"transparent", color:C.t0,   border:C.lineH,    sc:C.acc     },
     danger: { bg:"#d8404018",   color:C.err,  border:C.err+"30", sc:C.err     },
     subtle: { bg:C.bg4,         color:C.t1,   border:C.line,     sc:C.acc     },
     google: { bg:"#fff",        color:"#111", border:"#e0e0e0",  sc:"#4285F4" },

@@ -226,7 +226,7 @@ const MockPreview = ({ vis }) => {
           </div>
           <div style={{ padding:28 }}>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:16 }}>
-              {[["Schnitt","1.87",C.g2],["Noten","8",C.t0],["Bestes Fach","Mathe",C.t0],["Trend","↑ besser",C.g1]].map(([l,v,cl],i)=>(
+              {[["Schnitt","1,87",C.g2],["Noten","8",C.t0],["Bestes Fach","Mathe",C.t0],["Trend","↑ besser",C.g1]].map(([l,v,cl],i)=>(
                 <div key={i} style={{ background:C.bg3, borderRadius:R.l, padding:"14px 16px", border:`1px solid ${C.line}` }}>
                   <div style={{ fontSize:9, color:C.t2, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:6 }}>{l}</div>
                   <div style={{ fontSize:i===0?26:18, fontWeight:900, color:cl, letterSpacing:"-0.04em" }}>{v}</div>
@@ -245,7 +245,7 @@ const MockPreview = ({ vis }) => {
               </div>
               <div style={{ background:C.bg3, borderRadius:R.l, padding:"14px 16px", border:`1px solid ${C.line}` }}>
                 <div style={{ fontSize:10, color:C.t0, fontWeight:600, marginBottom:10 }}>Zuletzt eingetragen</div>
-                {[["Mathematik","1.0",C.g1,"Schulaufgabe"],["Deutsch","2.5",C.g2,"Ausfrage"],["Physik","1.5",C.g1,"Kurztest"]].map(([s,g,c,t],i)=>(
+                {[["Mathematik","1,0",C.g1,"Schulaufgabe"],["Deutsch","2,5",C.g2,"Ausfrage"],["Physik","1,5",C.g1,"Kurztest"]].map(([s,g,c,t],i)=>(
                   <div key={i} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:i<2?`1px solid ${C.line}`:"none" }}>
                     <div>
                       <div style={{ fontSize:10,fontWeight:600,color:C.t0 }}>{s}</div>
@@ -300,7 +300,7 @@ const CTASection = ({ onRegister, onLogin }) => {
           Bereit für mehr Überblick?
         </div>
         <p style={{ fontSize:16, color:C.t1, maxWidth:400, margin:"0 auto 40px", lineHeight:1.7 }}>
-          Starte jetzt — kostenlos, ohne Abo, ohne versteckte Kosten.
+          Starte jetzt – kostenlos, ohne Abo, ohne versteckte Kosten.
         </p>
         <div style={{ display:"flex", gap:14, justifyContent:"center", flexWrap:"wrap" }}>
           <SparkLink onClick={onRegister}>Account erstellen</SparkLink>
@@ -397,7 +397,7 @@ const Landing = memo(({ onLogin, onRegister }) => {
             style={{ width:160, background:C.bg2, border:`1px solid ${C.lineH}`, borderRadius:R.l, padding:"14px 16px", boxShadow:`0 20px 48px rgba(0,0,0,0.65), 0 0 24px ${C.acc}12` }}
           >
             <div style={{ fontSize:9, color:C.t2, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:8 }}>Gesamtschnitt</div>
-            <div style={{ fontSize:30, fontWeight:900, color:"#4ed468", letterSpacing:"-0.05em", lineHeight:1 }}>1.87</div>
+            <div style={{ fontSize:30, fontWeight:900, color:"#4ed468", letterSpacing:"-0.05em", lineHeight:1 }}>1,87</div>
             <div style={{ fontSize:11, color:C.t2, marginTop:5 }}>Sehr gut ↑</div>
           </motion.div>
         </motion.div>
@@ -416,7 +416,7 @@ const Landing = memo(({ onLogin, onRegister }) => {
               <div style={{ width:8, height:8, borderRadius:"50%", background:C.g1 }}/>
               <div style={{ fontSize:11, fontWeight:700, color:C.t0 }}>Neue Note</div>
             </div>
-            <div style={{ fontSize:13, color:C.t1, lineHeight:1.5 }}>Mathe SA<br/><span style={{ color:C.g1, fontWeight:700 }}>1.0</span> · ×2 Gewicht</div>
+            <div style={{ fontSize:13, color:C.t1, lineHeight:1.5 }}>Mathe SA<br/><span style={{ color:C.g1, fontWeight:700 }}>1,0</span> · ×2 Gewicht</div>
           </motion.div>
         </motion.div>
 
@@ -432,7 +432,7 @@ const Landing = memo(({ onLogin, onRegister }) => {
           >
             <div style={{ fontSize:9, color:C.accH, fontWeight:700, letterSpacing:"0.06em", textTransform:"uppercase", marginBottom:6 }}>Trend</div>
             <div style={{ fontSize:14, fontWeight:800, color:C.t0 }}>↑ Verbessert</div>
-            <div style={{ fontSize:11, color:C.t1, marginTop:3 }}>2.3 → 1.87</div>
+            <div style={{ fontSize:11, color:C.t1, marginTop:3 }}>2,3 → 1,87</div>
           </motion.div>
         </motion.div>
 
@@ -453,7 +453,7 @@ const Landing = memo(({ onLogin, onRegister }) => {
               </div>
               <div style={{ fontSize:12, fontWeight:700, color:C.t0 }}>KI-Assistent</div>
             </div>
-            <div style={{ fontSize:11, color:C.t1, lineHeight:1.55, marginBottom:8 }}>
+            <div style={{ fontSize:11, color:C.t0, lineHeight:1.55, marginBottom:8 }}>
               „Welche Note brauche ich für 1,5 in Mathe?"
             </div>
             <div style={{ fontSize:10, color:C.accH, fontWeight:600, padding:"3px 9px", background:`${C.acc}18`, borderRadius:R.f, display:"inline-block" }}>Antwort berechnen →</div>
@@ -471,7 +471,7 @@ const Landing = memo(({ onLogin, onRegister }) => {
             style={{ width:150, background:C.bg2, border:`1px solid ${C.lineH}`, borderRadius:R.l, padding:"12px 14px", boxShadow:`0 14px 34px rgba(0,0,0,0.55)` }}
           >
             <div style={{ fontSize:9, color:C.t2, fontWeight:700, letterSpacing:"0.07em", textTransform:"uppercase", marginBottom:9 }}>Fächer</div>
-            {[["Physik","1.0",C.g1],["Mathe","1.87",C.g2],["Deutsch","2.5",C.g2]].map(([fach,note,col])=>(
+            {[["Physik","1,0",C.g1],["Mathe","1,87",C.g2],["Deutsch","2,5",C.g2]].map(([fach,note,col])=>(
               <div key={fach} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"4px 0" }}>
                 <span style={{ fontSize:12, color:C.t1 }}>{fach}</span>
                 <span style={{ fontSize:13, fontWeight:800, color:col }}>{note}</span>
@@ -515,7 +515,7 @@ const Landing = memo(({ onLogin, onRegister }) => {
             transition={{ duration:0.55, delay:0.25 }}
             style={{ fontSize:18, color:C.t1, maxWidth:520, margin:"0 auto 42px", lineHeight:1.7 }}
           >
-            Analysiere deinen Schnitt, verstehe deine Leistung und behalte den Überblick über alle Fächer — modern und kostenlos.
+            Analysiere deinen Schnitt, verstehe deine Leistung und behalte den Überblick über alle Fächer – modern und kostenlos.
           </motion.p>
 
           <motion.div
@@ -524,7 +524,7 @@ const Landing = memo(({ onLogin, onRegister }) => {
             transition={{ duration:0.5, delay:0.38 }}
             style={{ display:"flex", gap:16, justifyContent:"center", flexWrap:"wrap" }}
           >
-            <SparkLink onClick={onRegister}>Jetzt starten — kostenlos</SparkLink>
+            <SparkLink onClick={onRegister}>Jetzt starten – kostenlos</SparkLink>
             <SparkLink variant="ghost" onClick={onLogin}>Anmelden</SparkLink>
           </motion.div>
         </motion.div>
