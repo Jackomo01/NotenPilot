@@ -14,6 +14,7 @@ export const Sk = ({ h=20, r=R.m, w="100%" }) => (
 export const SparkBtn = memo(({ children, onClick, variant="primary", size="md", disabled, type="button", full, icon }) => {
   const sz = { sm:"5px 12px", md:"9px 18px", lg:"13px 28px" };
   const fs = { sm:11, md:13, lg:14 };
+  const h = { sm:32, md:40, lg:48 };
   const v = {
     primary:{ bg:C.acc,        color:"#fff",  border:C.acc,      sc:C.accH    },
     ghost:  { bg:"transparent", color:C.t0,   border:C.lineH,    sc:C.acc     },
@@ -30,6 +31,7 @@ export const SparkBtn = memo(({ children, onClick, variant="primary", size="md",
           background:v.bg, color:v.color, border:`1px solid ${v.border}`,
           cursor:disabled?"not-allowed":"pointer", opacity:disabled?0.4:1,
           fontFamily:"inherit", whiteSpace:"nowrap", width:full?"100%":undefined,
+          height:h[size], boxSizing:"border-box",
           transition:"background 0.12s, border-color 0.12s, filter 0.12s",
         }}
         whileHover={disabled?{}:{ filter:"brightness(1.14)" }}
