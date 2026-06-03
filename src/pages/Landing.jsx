@@ -150,7 +150,7 @@ const CustomCursor = () => {
 
 // ─── Animated stat counter ────────────────────────────────────────────────────
 const StatCounter = ({ value, label, delay = 0, last = false }) => {
-  const [count, setCount] = useState(0);
+  const [count, setCount] = useState(value === "0€" ? 100 : 0); // Startwert für 0€ ist 100, sonst 0
   const [inView, setInView] = useState(false);
   const ref = useRef(null);
 
@@ -162,22 +162,38 @@ const StatCounter = ({ value, label, delay = 0, last = false }) => {
 
   useEffect(() => {
     if (!inView) return;
-    const end = parseInt(value) || 0;
-    if (!end) return;
+    
+    // Wenn es das Unendlich-Zeichen ist, brauchen wir keine Animation
+    if (value === "∞") return;
+
     const start = Date.now() + delay;
-    const duration = 1100;
+    const duration = 1100; // Dauer der Animation in Millisekunden
+
     const tick = () => {
       const elapsed = Date.now() - start;
       if (elapsed < 0) { requestAnimationFrame(tick); return; }
+      
       const p = Math.min(elapsed / duration, 1);
-      const eased = 1 - (1 - p) ** 3;
-      setCount(Math.round(eased * end));
+      const eased = 1 - (1 - p) ** 3; // Schöne, weiche Brems-Animation
+
+      if (value === "0€") {
+        // Runterzählen von 100 auf 0
+        setCount(Math.round(100 - (eased * 100)));
+      } else if (value === "100%") {
+        // Hochzählen von 0 auf 100
+        setCount(Math.round(eased * 100));
+      }
+
       if (p < 1) requestAnimationFrame(tick);
     };
+    
     requestAnimationFrame(tick);
-  }, [inView]);
+  }, [inView, value, delay]);
 
-  const displayValue = parseInt(value) ? `${count}${value.includes("+") ? "+" : ""}` : value;
+  // Hier bauen wir die Anzeige zusammen, damit % und € garantiert da sind
+  let displayValue = value;
+  if (value === "100%") displayValue = `${count}%`;
+  if (value === "0€") displayValue = `${count}€`;
 
   return (
     <div ref={ref} style={{ textAlign:"center", flex:1, padding:"32px 24px", borderRight: last ? "none" : `1px solid ${C.line}` }}>
@@ -659,12 +675,21 @@ const Landing = memo(({ onLogin, onRegister }) => {
 
       {/* MOCK PREVIEW */}
       <MockPreview vis={vis} />
-
-      {/* STATS ROW */}
+{/* STATS ROW */}
       <div style={{ maxWidth:900, margin:"0 auto 90px", padding:"0 60px" }}>
         <div style={{ display:"flex", background:C.bg2, border:`1px solid ${C.line}`, borderRadius:R.xl, overflow:"hidden" }}>
-          {[["8+","Notentypen",0,false],["100%","Lokal & privat",200,false],["0€","Für immer kostenlos",400,true]].map(([v,l,d,last]) => (
-            <StatCounter key={l} value={v} label={l} delay={d} last={last} />
+          {[
+            { v: "∞", l: "Fächer", d: 0 },
+            { v: "100%", l: "Datenschutz", d: 200 },
+            { v: "0€", l: "Abo", d: 400 }
+          ].map((item, idx, arr) => (
+            <StatCounter 
+              key={item.l} 
+              value={item.v} 
+              label={item.l} 
+              delay={item.d} 
+              last={idx === arr.length - 1} 
+            />
           ))}
         </div>
       </div>
