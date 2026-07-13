@@ -90,12 +90,10 @@ const CustomCursor = () => {
   const target  = useRef({ x: 0, y: 0 });
   const raf     = useRef(null);
   const hoveredRef = useRef(false);
-  const [enabled, setEnabled] = useState(false);
 
   useEffect(() => {
     const fine = window.matchMedia("(pointer: fine)").matches;
     if (!fine) return;
-    setEnabled(true);
     document.body.style.cursor = "none";
 
     const onMove = e => {
@@ -132,8 +130,6 @@ const CustomCursor = () => {
       document.body.style.cursor = "";
     };
   }, []);
-
-  if (!enabled) return null;
 
   return (
     <>
@@ -497,6 +493,31 @@ const FloatingCard = ({ side, pos, delay, floatAnim, children }) => (
   </motion.div>
 );
 
+// ─── How it works card ────────────────────────────────────────────────────────
+const HowItCard = ({ item, index }) => {
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const obs = new IntersectionObserver(([e]) => { if (e.isIntersecting) setVisible(true); }, { threshold:0.15 });
+    if (ref.current) obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, []);
+  return (
+    <motion.div
+      ref={ref}
+      initial={{ opacity:0, y:24 }}
+      animate={visible ? { opacity:1, y:0 } : {}}
+      transition={{ duration:0.45, delay:index * 0.08 }}
+      style={{ background:C.bg2, border:`1px solid ${C.line}`, borderRadius:R.xl, padding:"28px 24px", position:"relative", overflow:"hidden" }}
+    >
+      <div style={{ position:"absolute", inset:"auto -20px -20px auto", width:140, height:140, borderRadius:"50%", background:`radial-gradient(circle, ${C.acc}12, transparent 70%)`, pointerEvents:"none" }} />
+      <div style={{ fontSize:12, color:C.accH, fontWeight:800, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:10 }}>0{index + 1}</div>
+      <div style={{ fontSize:18, fontWeight:800, color:C.t0, marginBottom:10, letterSpacing:"-0.02em" }}>{item.title}</div>
+      <div style={{ fontSize:14, color:C.t1, lineHeight:1.75 }}>{item.body}</div>
+    </motion.div>
+  );
+};
+
 // ─── Main Landing ─────────────────────────────────────────────────────────────
 const Landing = memo(({ onLogin, onRegister }) => {
   const [vis, setVis] = useState(false);
@@ -672,19 +693,7 @@ const Landing = memo(({ onLogin, onRegister }) => {
         />
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:18 }} className="howit-grid">
           {HOW_IT_WORKS.map((item, index) => (
-            <motion.div
-              key={item.title}
-              initial={{ opacity:0, y:24 }}
-              whileInView={{ opacity:1, y:0 }}
-              viewport={{ once:true, amount:0.2 }}
-              transition={{ duration:0.45, delay:index * 0.08 }}
-              style={{ background:C.bg2, border:`1px solid ${C.line}`, borderRadius:R.xl, padding:"28px 24px", position:"relative", overflow:"hidden" }}
-            >
-              <div style={{ position:"absolute", inset:"auto -20px -20px auto", width:140, height:140, borderRadius:"50%", background:`radial-gradient(circle, ${C.acc}12, transparent 70%)`, pointerEvents:"none" }} />
-              <div style={{ fontSize:12, color:C.accH, fontWeight:800, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:10 }}>0{index + 1}</div>
-              <div style={{ fontSize:18, fontWeight:800, color:C.t0, marginBottom:10, letterSpacing:"-0.02em" }}>{item.title}</div>
-              <div style={{ fontSize:14, color:C.t1, lineHeight:1.75 }}>{item.body}</div>
-            </motion.div>
+            <HowItCard key={item.title} item={item} index={index} />
           ))}
         </div>
       </div>
