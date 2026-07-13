@@ -78,11 +78,11 @@ const FAQ = [
   },
   {
     q: "Brauche ich ein Abo?",
-    a: "Nein. Der Einstieg ist kostenlos und ohne versteckte Kosten gedacht.",
+    a: "Nein. Notenpilot ist komplett kostenlos, ohne versteckte Kosten oder Abogebühren.",
   },
 ];
 
-// ─── Custom cursor ────────────────────────────────────────────────────────────
+// ─── Custom cursor (desktop only) ─────────────────────────────────────────────
 const CustomCursor = () => {
   const ringRef = useRef(null);
   const dotRef  = useRef(null);
@@ -90,8 +90,14 @@ const CustomCursor = () => {
   const target  = useRef({ x: 0, y: 0 });
   const raf     = useRef(null);
   const [hovered, setHovered] = useState(false);
+  const [enabled, setEnabled] = useState(false);
 
   useEffect(() => {
+    const fine = window.matchMedia("(pointer: fine)").matches;
+    if (!fine) return;
+    setEnabled(true);
+    document.body.style.cursor = "none";
+
     const onMove = e => {
       target.current = { x: e.clientX, y: e.clientY };
       if (dotRef.current) {
@@ -122,12 +128,14 @@ const CustomCursor = () => {
       window.removeEventListener("mouseover", onOver);
       window.removeEventListener("mouseout", onOut);
       cancelAnimationFrame(raf.current);
+      document.body.style.cursor = "";
     };
   }, [hovered]);
 
+  if (!enabled) return null;
+
   return (
     <>
-      {/* Trailing ring */}
       <div ref={ringRef} style={{
         position:"fixed", top:0, left:0, width:40, height:40, borderRadius:"50%",
         border:`1.5px solid ${hovered ? C.accH : C.acc}90`,
@@ -136,7 +144,6 @@ const CustomCursor = () => {
         willChange:"transform",
         mixBlendMode:"screen",
       }}/>
-      {/* Instant dot */}
       <div ref={dotRef} style={{
         position:"fixed", top:0, left:0, width:8, height:8, borderRadius:"50%",
         background: hovered ? C.accH : C.acc,
@@ -150,7 +157,7 @@ const CustomCursor = () => {
 
 // ─── Animated stat counter ────────────────────────────────────────────────────
 const StatCounter = ({ value, label, delay = 0, last = false }) => {
-  const [count, setCount] = useState(value === "0€" ? 100 : 0); // Startwert für 0€ ist 100, sonst 0
+  const [count, setCount] = useState(value === "0€" ? 100 : 0);
   const [inView, setInView] = useState(false);
   const ref = useRef(null);
 
@@ -162,35 +169,30 @@ const StatCounter = ({ value, label, delay = 0, last = false }) => {
 
   useEffect(() => {
     if (!inView) return;
-    
-    // Wenn es das Unendlich-Zeichen ist, brauchen wir keine Animation
     if (value === "∞") return;
 
     const start = Date.now() + delay;
-    const duration = 1100; // Dauer der Animation in Millisekunden
+    const duration = 1100;
 
     const tick = () => {
       const elapsed = Date.now() - start;
       if (elapsed < 0) { requestAnimationFrame(tick); return; }
-      
+
       const p = Math.min(elapsed / duration, 1);
-      const eased = 1 - (1 - p) ** 3; // Schöne, weiche Brems-Animation
+      const eased = 1 - (1 - p) ** 3;
 
       if (value === "0€") {
-        // Runterzählen von 100 auf 0
         setCount(Math.round(100 - (eased * 100)));
       } else if (value === "100%") {
-        // Hochzählen von 0 auf 100
         setCount(Math.round(eased * 100));
       }
 
       if (p < 1) requestAnimationFrame(tick);
     };
-    
+
     requestAnimationFrame(tick);
   }, [inView, value, delay]);
 
-  // Hier bauen wir die Anzeige zusammen, damit % und € garantiert da sind
   let displayValue = value;
   if (value === "100%") displayValue = `${count}%`;
   if (value === "0€") displayValue = `${count}€`;
@@ -261,7 +263,7 @@ const SectionHeading = ({ kicker, title, body }) => {
   }, []);
 
   return (
-    <div ref={ref} style={{ textAlign:"center", marginBottom:36 }}>
+    <div ref={ref} style={{ textAlign:"center", marginBottom:36, padding:"0 16px" }}>
       <motion.div initial={{ opacity:0, y:18 }} animate={visible ? { opacity:1, y:0 } : {}} transition={{ duration:0.45 }} style={{ fontSize:11, color:C.accH, fontWeight:800, letterSpacing:"0.14em", textTransform:"uppercase", marginBottom:10 }}>
         {kicker}
       </motion.div>
@@ -357,7 +359,7 @@ const MockPreview = ({ vis }) => {
       initial={{ opacity:0, y:40 }}
       animate={{ opacity:vis?1:0, y:vis?0:40 }}
       transition={{ duration:0.7, delay:0.5 }}
-      style={{ maxWidth:1000, margin:"0 auto 40px", padding:"0 60px" }}
+      style={{ maxWidth:1000, margin:"0 auto 40px", padding:"0 16px" }}
     >
       <motion.div style={{ y, scale, position:"relative" }}>
         <div style={{ background:C.bg2, border:`1px solid ${C.lineH}`, borderRadius:R.xl, overflow:"hidden", boxShadow:`0 64px 120px rgba(0,0,0,0.9), 0 0 0 1px rgba(255,255,255,0.03), 0 0 80px ${C.acc}0a` }}>
@@ -436,7 +438,7 @@ const CTASection = ({ onRegister, onLogin }) => {
   }, []);
 
   return (
-    <div ref={ref} style={{ position:"relative", overflow:"hidden", borderTop:`1px solid ${C.line}`, padding:"100px 60px", textAlign:"center", background:C.bg1 }}>
+    <div ref={ref} style={{ position:"relative", overflow:"hidden", borderTop:`1px solid ${C.line}`, padding:"100px 24px", textAlign:"center", background:C.bg1 }}>
       <motion.div style={{ y:bgY, position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-50%)", width:700, height:400, background:`radial-gradient(ellipse, ${C.acc}16, transparent 70%)`, pointerEvents:"none" }}/>
       <motion.div initial={{ opacity:0, y:24 }} animate={visible ? { opacity:1, y:0 } : {}} transition={{ duration:0.55 }} style={{ position:"relative", zIndex:1 }}>
         <div style={{ fontSize:"clamp(26px,4vw,42px)", fontWeight:900, letterSpacing:"-0.04em", color:C.t0, marginBottom:16, lineHeight:1.15 }}>
@@ -464,7 +466,7 @@ const FeaturesHeading = () => {
     return () => obs.disconnect();
   }, []);
   return (
-    <div ref={ref} style={{ textAlign:"center", marginBottom:56 }}>
+    <div ref={ref} style={{ textAlign:"center", marginBottom:56, padding:"0 16px" }}>
       <motion.div initial={{ opacity:0, y:20 }} animate={visible ? { opacity:1, y:0 } : {}} transition={{ duration:0.5 }}
         style={{ fontSize:"clamp(28px,4vw,44px)", fontWeight:900, letterSpacing:"-0.04em", color:C.t0, lineHeight:1.1, marginBottom:14 }}>
         Was Notenpilot bietet
@@ -476,6 +478,25 @@ const FeaturesHeading = () => {
     </div>
   );
 };
+
+// ─── Floating card wrapper (hidden on mobile) ─────────────────────────────────
+const FloatingCard = ({ side, pos, delay, floatAnim, children }) => (
+  <motion.div
+    initial={{ opacity:0, x: side === "left" ? -40 : 40 }}
+    animate={{ opacity:1, x:0 }}
+    transition={{ duration:0.7, delay }}
+    style={{ position:"absolute", [side]:pos.side, top:pos.top, zIndex:2, pointerEvents:"none", display:"none" }}
+    className="floating-card"
+  >
+    <motion.div
+      animate={floatAnim}
+      transition={{ duration:4.2, repeat:Infinity, ease:"easeInOut" }}
+      style={pos.style}
+    >
+      {children}
+    </motion.div>
+  </motion.div>
+);
 
 // ─── Main Landing ─────────────────────────────────────────────────────────────
 const Landing = memo(({ onLogin, onRegister }) => {
@@ -490,7 +511,7 @@ const Landing = memo(({ onLogin, onRegister }) => {
   }, []);
 
   return (
-    <div style={{ background:C.bg0, minHeight:"100vh", fontFamily:"inherit", overflowX:"hidden", cursor:"none" }}>
+    <div style={{ background:C.bg0, minHeight:"100vh", fontFamily:"inherit", overflowX:"hidden" }}>
       <CustomCursor />
 
       {/* NAV */}
@@ -503,7 +524,7 @@ const Landing = memo(({ onLogin, onRegister }) => {
           background:C.bg0+"e0", backdropFilter:"blur(20px)",
           borderBottom:`1px solid ${C.line}`,
           display:"flex", justifyContent:"space-between", alignItems:"center",
-          padding:"0 60px", height:60,
+          padding:"0 24px", height:60,
         }}
       >
         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
@@ -529,115 +550,55 @@ const Landing = memo(({ onLogin, onRegister }) => {
         <HeroBackground />
 
         {/* ── Floating Cards — left ── */}
-        <motion.div
-          initial={{ opacity:0, x:-40 }} animate={{ opacity:vis?1:0, x:vis?0:-40 }}
-          transition={{ duration:0.7, delay:0.9 }}
-          style={{ position:"absolute", left:"6%", top:"20%", zIndex:2, pointerEvents:"none" }}
-        >
-          <motion.div
-            animate={{ y:[0,-12,0], rotate:[-1,1,-1] }}
-            transition={{ duration:4.2, repeat:Infinity, ease:"easeInOut" }}
-            style={{ width:160, background:C.bg2, border:`1px solid ${C.lineH}`, borderRadius:R.l, padding:"14px 16px", boxShadow:`0 20px 48px rgba(0,0,0,0.65), 0 0 24px ${C.acc}12` }}
-          >
-            <div style={{ fontSize:9, color:C.t2, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:8 }}>Gesamtschnitt</div>
-            <div style={{ fontSize:30, fontWeight:900, color:"#4ed468", letterSpacing:"-0.05em", lineHeight:1 }}>1,87</div>
-            <div style={{ fontSize:11, color:C.t2, marginTop:5 }}>Sehr gut ↑</div>
-          </motion.div>
-        </motion.div>
+        <FloatingCard side="left" pos={{ side:"6%", top:"20%", style:{ width:160, background:C.bg2, border:`1px solid ${C.lineH}`, borderRadius:R.l, padding:"14px 16px", boxShadow:`0 20px 48px rgba(0,0,0,0.65), 0 0 24px ${C.acc}12` } }} delay={0.9} floatAnim={{ y:[0,-12,0], rotate:[-1,1,-1] }}>
+          <div style={{ fontSize:9, color:C.t2, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:8 }}>Gesamtschnitt</div>
+          <div style={{ fontSize:30, fontWeight:900, color:"#4ed468", letterSpacing:"-0.05em", lineHeight:1 }}>1,87</div>
+          <div style={{ fontSize:11, color:C.t2, marginTop:5 }}>Sehr gut ↑</div>
+        </FloatingCard>
 
-        <motion.div
-          initial={{ opacity:0, x:-40 }} animate={{ opacity:vis?1:0, x:vis?0:-40 }}
-          transition={{ duration:0.7, delay:1.05 }}
-          style={{ position:"absolute", left:"7%", top:"60%", zIndex:2, pointerEvents:"none" }}
-        >
-          <motion.div
-            animate={{ y:[0,9,0], x:[0,5,0] }}
-            transition={{ duration:5, repeat:Infinity, ease:"easeInOut", delay:0.8 }}
-            style={{ width:148, background:C.bg2, border:`1px solid ${C.lineH}`, borderRadius:R.l, padding:"12px 15px", boxShadow:`0 14px 36px rgba(0,0,0,0.6)` }}
-          >
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:9 }}>
-              <div style={{ width:8, height:8, borderRadius:"50%", background:C.g1 }}/>
-              <div style={{ fontSize:11, fontWeight:700, color:C.t0 }}>Neue Note</div>
-            </div>
-            <div style={{ fontSize:13, color:C.t1, lineHeight:1.5 }}>Mathe SA<br/><span style={{ color:C.g1, fontWeight:700 }}>1,0</span> · ×2 Gewicht</div>
-          </motion.div>
-        </motion.div>
+        <FloatingCard side="left" pos={{ side:"7%", top:"60%", style:{ width:148, background:C.bg2, border:`1px solid ${C.lineH}`, borderRadius:R.l, padding:"12px 15px", boxShadow:"0 14px 36px rgba(0,0,0,0.6)" } }} delay={1.05} floatAnim={{ y:[0,9,0], x:[0,5,0] }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:9 }}>
+            <div style={{ width:8, height:8, borderRadius:"50%", background:C.g1 }}/>
+            <div style={{ fontSize:11, fontWeight:700, color:C.t0 }}>Neue Note</div>
+          </div>
+          <div style={{ fontSize:13, color:C.t1, lineHeight:1.5 }}>Mathe SA<br/><span style={{ color:C.g1, fontWeight:700 }}>1,0</span> · ×2 Gewicht</div>
+        </FloatingCard>
 
-        <motion.div
-          initial={{ opacity:0, x:-30 }} animate={{ opacity:vis?1:0, x:vis?0:-30 }}
-          transition={{ duration:0.7, delay:1.2 }}
-          style={{ position:"absolute", left:"3%", top:"43%", zIndex:2, pointerEvents:"none" }}
-        >
-          <motion.div
-            animate={{ y:[0,-7,0] }}
-            transition={{ duration:3.6, repeat:Infinity, ease:"easeInOut", delay:1.4 }}
-            style={{ width:128, background:`${C.acc}14`, border:`1px solid ${C.acc}32`, borderRadius:R.l, padding:"10px 13px", boxShadow:`0 10px 28px rgba(0,0,0,0.45)` }}
-          >
-            <div style={{ fontSize:9, color:C.accH, fontWeight:700, letterSpacing:"0.06em", textTransform:"uppercase", marginBottom:6 }}>Trend</div>
-            <div style={{ fontSize:14, fontWeight:800, color:C.t0 }}>↑ Verbessert</div>
-            <div style={{ fontSize:11, color:C.t1, marginTop:3 }}>2,3 → 1,87</div>
-          </motion.div>
-        </motion.div>
+        <FloatingCard side="left" pos={{ side:"3%", top:"43%", style:{ width:128, background:`${C.acc}14`, border:`1px solid ${C.acc}32`, borderRadius:R.l, padding:"10px 13px", boxShadow:"0 10px 28px rgba(0,0,0,0.45)" } }} delay={1.2} floatAnim={{ y:[0,-7,0] }}>
+          <div style={{ fontSize:9, color:C.accH, fontWeight:700, letterSpacing:"0.06em", textTransform:"uppercase", marginBottom:6 }}>Trend</div>
+          <div style={{ fontSize:14, fontWeight:800, color:C.t0 }}>↑ Verbessert</div>
+          <div style={{ fontSize:11, color:C.t1, marginTop:3 }}>2,3 → 1,87</div>
+        </FloatingCard>
 
         {/* ── Floating Cards — right ── */}
-        <motion.div
-          initial={{ opacity:0, x:40 }} animate={{ opacity:vis?1:0, x:vis?0:40 }}
-          transition={{ duration:0.7, delay:0.95 }}
-          style={{ position:"absolute", right:"6%", top:"18%", zIndex:2, pointerEvents:"none" }}
-        >
-          <motion.div
-            animate={{ y:[0,-13,0], rotate:[1,-1,1] }}
-            transition={{ duration:4.8, repeat:Infinity, ease:"easeInOut", delay:0.4 }}
-            style={{ width:168, background:C.bg2, border:`1px solid ${C.lineH}`, borderRadius:R.l, padding:"14px 15px", boxShadow:`0 20px 48px rgba(0,0,0,0.65), 0 0 24px ${C.accH}0e` }}
-          >
-            <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:9 }}>
-              <div style={{ width:24, height:24, borderRadius:7, background:`${C.acc}22`, border:`1px solid ${C.acc}30`, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke={C.accH} strokeWidth={2.2} strokeLinecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12"/></svg>
-              </div>
-              <div style={{ fontSize:12, fontWeight:700, color:C.t0 }}>KI-Assistent</div>
+        <FloatingCard side="right" pos={{ side:"6%", top:"18%", style:{ width:168, background:C.bg2, border:`1px solid ${C.lineH}`, borderRadius:R.l, padding:"14px 15px", boxShadow:`0 20px 48px rgba(0,0,0,0.65), 0 0 24px ${C.accH}0e` } }} delay={0.95} floatAnim={{ y:[0,-13,0], rotate:[1,-1,1] }}>
+          <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:9 }}>
+            <div style={{ width:24, height:24, borderRadius:7, background:`${C.acc}22`, border:`1px solid ${C.acc}30`, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke={C.accH} strokeWidth={2.2} strokeLinecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12"/></svg>
             </div>
-            <div style={{ fontSize:11, color:C.t0, lineHeight:1.55, marginBottom:8 }}>
-              „Welche Note brauche ich für 1,5 in Mathe?"
+            <div style={{ fontSize:12, fontWeight:700, color:C.t0 }}>KI-Assistent</div>
+          </div>
+          <div style={{ fontSize:11, color:C.t0, lineHeight:1.55, marginBottom:8 }}>
+            „Welche Note brauche ich für 1,5 in Mathe?"
+          </div>
+          <div style={{ fontSize:10, color:C.accH, fontWeight:600, padding:"3px 9px", background:`${C.acc}18`, borderRadius:R.f, display:"inline-block" }}>Antwort berechnen&nbsp;→</div>
+        </FloatingCard>
+
+        <FloatingCard side="right" pos={{ side:"6%", top:"57%", style:{ width:150, background:C.bg2, border:`1px solid ${C.lineH}`, borderRadius:R.l, padding:"12px 14px", boxShadow:"0 14px 34px rgba(0,0,0,0.55)" } }} delay={1.1} floatAnim={{ y:[0,10,0], x:[0,-6,0] }}>
+          <div style={{ fontSize:9, color:C.t2, fontWeight:700, letterSpacing:"0.07em", textTransform:"uppercase", marginBottom:9 }}>Fächer</div>
+          {[["Physik","1,0",C.g1],["Mathe","1,87",C.g2],["Deutsch","2,5",C.g2]].map(([fach,note,col])=>(
+            <div key={fach} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"4px 0" }}>
+              <span style={{ fontSize:12, color:C.t1 }}>{fach}</span>
+              <span style={{ fontSize:13, fontWeight:800, color:col }}>{note}</span>
             </div>
-            <div style={{ fontSize:10, color:C.accH, fontWeight:600, padding:"3px 9px", background:`${C.acc}18`, borderRadius:R.f, display:"inline-block" }}>Antwort berechnen&nbsp;→</div>
-          </motion.div>
-        </motion.div>
+          ))}
+        </FloatingCard>
 
-        <motion.div
-          initial={{ opacity:0, x:40 }} animate={{ opacity:vis?1:0, x:vis?0:40 }}
-          transition={{ duration:0.7, delay:1.1 }}
-          style={{ position:"absolute", right:"6%", top:"57%", zIndex:2, pointerEvents:"none" }}
-        >
-          <motion.div
-            animate={{ y:[0,10,0], x:[0,-6,0] }}
-            transition={{ duration:4.4, repeat:Infinity, ease:"easeInOut", delay:1.1 }}
-            style={{ width:150, background:C.bg2, border:`1px solid ${C.lineH}`, borderRadius:R.l, padding:"12px 14px", boxShadow:`0 14px 34px rgba(0,0,0,0.55)` }}
-          >
-            <div style={{ fontSize:9, color:C.t2, fontWeight:700, letterSpacing:"0.07em", textTransform:"uppercase", marginBottom:9 }}>Fächer</div>
-            {[["Physik","1,0",C.g1],["Mathe","1,87",C.g2],["Deutsch","2,5",C.g2]].map(([fach,note,col])=>(
-              <div key={fach} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"4px 0" }}>
-                <span style={{ fontSize:12, color:C.t1 }}>{fach}</span>
-                <span style={{ fontSize:13, fontWeight:800, color:col }}>{note}</span>
-              </div>
-            ))}
-          </motion.div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity:0, x:30 }} animate={{ opacity:vis?1:0, x:vis?0:30 }}
-          transition={{ duration:0.7, delay:1.3 }}
-          style={{ position:"absolute", right:"3%", top:"39%", zIndex:2, pointerEvents:"none" }}
-        >
-          <motion.div
-            animate={{ y:[0,-8,0] }}
-            transition={{ duration:3.2, repeat:Infinity, ease:"easeInOut", delay:2 }}
-            style={{ width:120, background:`${C.g1}12`, border:`1px solid ${C.g1}28`, borderRadius:R.l, padding:"10px 12px", boxShadow:`0 10px 24px rgba(0,0,0,0.45)` }}
-          >
-            <div style={{ fontSize:9, color:C.g1, fontWeight:700, letterSpacing:"0.06em", textTransform:"uppercase", marginBottom:6 }}>Streak</div>
-            <div style={{ fontSize:22, fontWeight:900, color:C.t0, letterSpacing:"-0.03em" }}>12 🔥</div>
-            <div style={{ fontSize:11, color:C.t1, marginTop:3 }}>Tage aktiv</div>
-          </motion.div>
-        </motion.div>
+        <FloatingCard side="right" pos={{ side:"3%", top:"39%", style:{ width:120, background:`${C.g1}12`, border:`1px solid ${C.g1}28`, borderRadius:R.l, padding:"10px 12px", boxShadow:"0 10px 24px rgba(0,0,0,0.45)" } }} delay={1.3} floatAnim={{ y:[0,-8,0] }}>
+          <div style={{ fontSize:9, color:C.g1, fontWeight:700, letterSpacing:"0.06em", textTransform:"uppercase", marginBottom:6 }}>Streak</div>
+          <div style={{ fontSize:22, fontWeight:900, color:C.t0, letterSpacing:"-0.03em" }}>12 🔥</div>
+          <div style={{ fontSize:11, color:C.t1, marginTop:3 }}>Tage aktiv</div>
+        </FloatingCard>
 
         {/* Hero text */}
         <motion.div style={{ y:heroY, opacity:heroOpacity, position:"relative", zIndex:1, textAlign:"center", padding:"0 24px", maxWidth:920, width:"100%" }}>
@@ -675,41 +636,42 @@ const Landing = memo(({ onLogin, onRegister }) => {
 
       {/* MOCK PREVIEW */}
       <MockPreview vis={vis} />
-{/* STATS ROW */}
-      <div style={{ maxWidth:900, margin:"0 auto 90px", padding:"0 60px" }}>
-        <div style={{ display:"flex", background:C.bg2, border:`1px solid ${C.line}`, borderRadius:R.xl, overflow:"hidden" }}>
+
+      {/* STATS ROW */}
+      <div style={{ maxWidth:900, margin:"0 auto 90px", padding:"0 24px" }}>
+        <div style={{ display:"flex", flexWrap:"wrap", background:C.bg2, border:`1px solid ${C.line}`, borderRadius:R.xl, overflow:"hidden" }}>
           {[
             { v: "∞", l: "Fächer", d: 0 },
-            { v: "100%", l: "Datenschutz", d: 200 },
-            { v: "0€", l: "Abo", d: 400 }
+            { v: "100%", l: "Lokale Daten", d: 200 },
+            { v: "0€", l: "Kosten", d: 400 }
           ].map((item, idx, arr) => (
-            <StatCounter 
-              key={item.l} 
-              value={item.v} 
-              label={item.l} 
-              delay={item.d} 
-              last={idx === arr.length - 1} 
+            <StatCounter
+              key={item.l}
+              value={item.v}
+              label={item.l}
+              delay={item.d}
+              last={idx === arr.length - 1}
             />
           ))}
         </div>
       </div>
 
       {/* FEATURES */}
-      <div id="features" style={{ maxWidth:1100, margin:"0 auto", padding:"40px 60px 100px" }}>
+      <div id="features" style={{ maxWidth:1100, margin:"0 auto", padding:"40px 24px 100px" }}>
         <FeaturesHeading />
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }} className="features-grid">
           {FEATURES.map((f, i) => <FeatureCard key={i} f={f} i={i} />)}
         </div>
       </div>
 
       {/* HOW IT WORKS */}
-      <div style={{ maxWidth:1100, margin:"0 auto", padding:"0 60px 96px" }}>
+      <div style={{ maxWidth:1100, margin:"0 auto", padding:"0 24px 96px" }}>
         <SectionHeading
           kicker="So funktioniert es"
           title="Vom Eintragen zur klaren Analyse in drei Schritten"
-          body="Die Seite ist bewusst auf die Suche nach Hilfe bei Notendurchschnitt, Notenverwaltung und Leistungsübersicht ausgerichtet."
+          body="Noten erfassen, Schnitt verstehen, gezielt verbessern – ohne Umweg."
         />
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:18 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:18 }} className="howit-grid">
           {HOW_IT_WORKS.map((item, index) => (
             <motion.div
               key={item.title}
@@ -729,11 +691,11 @@ const Landing = memo(({ onLogin, onRegister }) => {
       </div>
 
       {/* FAQ */}
-      <div style={{ maxWidth:1100, margin:"0 auto", padding:"0 60px 96px" }}>
+      <div style={{ maxWidth:1100, margin:"0 auto", padding:"0 24px 96px" }}>
         <SectionHeading
           kicker="Häufige Fragen"
-          title="Kurze Antworten auf die wichtigsten Suchanfragen"
-          body="Diese Fragen decken die typischen Informationsbedürfnisse rund um Schulnoten, App-Nutzen und Kosten ab."
+          title="Kurze Antworten auf die wichtigsten Fragen"
+          body="Alles rund um Notenverwaltung, Durchschnittsberechnung und Kosten – kompakt erklärt."
         />
         <FAQAccordion items={FAQ} />
       </div>
@@ -742,7 +704,7 @@ const Landing = memo(({ onLogin, onRegister }) => {
       <CTASection onRegister={onRegister} onLogin={onLogin} />
 
       {/* FOOTER */}
-      <div style={{ borderTop:`1px solid ${C.line}`, padding:"22px 60px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+      <div style={{ borderTop:`1px solid ${C.line}`, padding:"22px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 }}>
         <div style={{ display:"flex", alignItems:"center", gap:9 }}>
           <div style={{ width:20, height:20, borderRadius:5, background:C.acc, display:"flex", alignItems:"center", justifyContent:"center" }}>
             <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
@@ -751,6 +713,17 @@ const Landing = memo(({ onLogin, onRegister }) => {
         </div>
         <span style={{ fontSize:12, color:C.t2 }}>Kein Tracking · Kein Abo · Open Source</span>
       </div>
+
+      {/* Responsive overrides */}
+      <style>{`
+        @media (min-width: 769px) {
+          .floating-card { display: block !important; }
+        }
+        @media (max-width: 768px) {
+          .features-grid { grid-template-columns: 1fr !important; }
+          .howit-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
     </div>
   );
 });
