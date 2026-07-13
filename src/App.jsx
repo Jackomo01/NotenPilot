@@ -1,0 +1,390 @@
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { motion } from "framer-motion";
+
+import { AppCtx, ToastProvider } from "./context/index.jsx";
+import { useLS } from "./hooks/index.jsx";
+import { loadGsap } from "./utils/gsap.jsx";
+import { C, R } from "./utils/tokens.jsx";
+import { SEED_GRADES, SEED_SUBJECTS, Icons } from "./utils/data.jsx";
+
+import { Dock }      from "./animations/index.jsx";
+import { SparkBtn, Modal } from "./components/ui.jsx";
+import SearchBar     from "./components/SearchBar.jsx";
+import GradeForm     from "./components/GradeForm.jsx";
+import AIMascotDrawer from "./components/AIMascotDrawer.jsx";
+
+import Landing   from "./pages/Landing.jsx";
+import AuthPage  from "./pages/AuthPage.jsx";
+import Dashboard from "./pages/Dashboard.jsx";
+import { GradesPage, StatsPage, SettingsPage } from "./pages/index.jsx";
+import { DAILY_AI_PILOT_QUESTIONS, getUserQuestionQuota, saveUserCloudData, subscribeUserCloudData } from "./utils/cloudData.js";
+import { signOutUser } from "./utils/firebase.js";
+
+const getMsUntilNextBerlinMidnight = () => {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const currentBerlinTime = Date.UTC(
+    Number(map.year),
+    Number(map.month) - 1,
+    Number(map.day),
+    Number(map.hour),
+    Number(map.minute),
+    Number(map.second)
+  );
+  const nextBerlinMidnight = Date.UTC(
+    Number(map.year),
+    Number(map.month) - 1,
+    Number(map.day) + 1,
+    0,
+    0,
+    0
+  );
+
+  return Math.max(60_000, nextBerlinMidnight - currentBerlinTime + 1_000);
+};
+
+const setHeadMeta = (selector, value) => {
+  const node = document.querySelector(selector);
+  if (node) node.setAttribute("content", value);
+};
+
+const GlobalStyles = () => (
+  <style>{`
+    @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      background: #07070c;
+      color: #ededf8;
+      font-family: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      width: 100%;
+      overflow-x: hidden;
+    }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #1c1c2e; border-radius: 9px; }
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+    ::selection { background: #5b6ef030; }
+    @keyframes sk {
+      0%   { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+    .sf-inner   { will-change: transform, opacity; }
+    .sr-word    { will-change: opacity, filter; }
+    .scroll-stack-card { will-change: transform, filter; backface-visibility: hidden; }
+    @keyframes gradeHighlight {
+      0%   { background: rgba(91,110,240,0.20); }
+      70%  { background: rgba(91,110,240,0.08); }
+      100% { background: transparent; }
+    }
+    .grade-row-highlighted td {
+      animation: gradeHighlight 2.2s ease forwards;
+    }
+    .grade-row-highlighted {
+      border-left: 3px solid #5b6ef0 !important;
+    }
+  `}</style>
+);
+
+function AppShell() {
+  const [grades,      setGrades]      = useLS("np6_grades",   SEED_GRADES);
+  const [subjects,    setSubjects]    = useLS("np6_subjects", []);
+  const [user,        setUser]        = useLS("np6_user",     null);
+  const [page,        setPage]        = useState("dashboard");
+  const [view,        setView]        = useState("landing");
+  const [addOpen,     setAddOpen]     = useState(false);
+  const [loading,     setLoading]     = useState(true);
+  const [highlightId, setHighlightId] = useState(null);
+  const [questionsRemaining, setQuestionsRemaining] = useState(DAILY_AI_PILOT_QUESTIONS);
+  const [cloudSynced, setCloudSynced] = useState(false);
+  const cloudReadyRef = useRef(false);
+  const lastCloudSigRef = useRef("");
+
+  useEffect(() => {
+    const metaByView = {
+      landing: {
+        title: "Notenpilot | Schulnoten und Notendurchschnitt im Blick",
+        description: "Notenpilot ist die kostenlose Schulnoten-App für Notendurchschnitt, Fächer und Leistungen. Behalte deine Schulnoten modern und übersichtlich im Blick.",
+      },
+      auth: {
+        title: "Anmelden | Notenpilot",
+        description: "Melde dich bei Notenpilot an, um deine Schulnoten, Fächer und Auswertungen weiterzuführen.",
+      },
+      app: {
+        title: "Dashboard | Notenpilot",
+        description: "Verwalte Schulnoten, analysiere deinen Schnitt und behalte deine Leistungen in Notenpilot im Blick.",
+      },
+    };
+
+    const nextMeta = metaByView[view] ?? metaByView.landing;
+    document.title = nextMeta.title;
+    setHeadMeta('meta[name="description"]', nextMeta.description);
+    setHeadMeta('meta[property="og:title"]', nextMeta.title);
+    setHeadMeta('meta[property="og:description"]', nextMeta.description);
+    setHeadMeta('meta[name="twitter:title"]', nextMeta.title);
+    setHeadMeta('meta[name="twitter:description"]', nextMeta.description);
+  }, [view]);
+
+  const refreshQuestionQuota = useCallback(async () => {
+    if (!user?.uid) return;
+
+    try {
+      const quota = await getUserQuestionQuota(user.uid, DAILY_AI_PILOT_QUESTIONS);
+      if (Number.isFinite(quota?.remaining)) {
+        setQuestionsRemaining(quota.remaining);
+      }
+    } catch (err) {
+      console.error("Quota refresh failed:", err);
+    }
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (user) setView("app");
+    loadGsap();
+    const t = setTimeout(() => setLoading(false), 600);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      cloudReadyRef.current = false;
+      lastCloudSigRef.current = "";
+      setCloudSynced(false);
+      return;
+    }
+
+    cloudReadyRef.current = false;
+    setCloudSynced(false);
+
+    const unsub = subscribeUserCloudData(
+      user.uid,
+      async (remoteData) => {
+        if (!remoteData) {
+          const initialPayload = { grades: [], subjects: [] };
+          const initialSig = JSON.stringify(initialPayload);
+          await saveUserCloudData(user.uid, initialPayload);
+          setGrades(initialPayload.grades);
+          setSubjects(initialPayload.subjects);
+          lastCloudSigRef.current = initialSig;
+          cloudReadyRef.current = true;
+          setCloudSynced(true);
+          return;
+        }
+
+        const remoteSig = JSON.stringify(remoteData);
+        const hasChanged = remoteSig !== lastCloudSigRef.current;
+        lastCloudSigRef.current = remoteSig;
+        if (hasChanged) {
+          setGrades(remoteData.grades);
+          setSubjects(remoteData.subjects);
+        }
+        cloudReadyRef.current = true;
+        setCloudSynced(true);
+      },
+      (err) => {
+        console.error("Cloud sync subscribe failed:", err);
+        cloudReadyRef.current = false;
+        setCloudSynced(false);
+      }
+    );
+
+    return () => unsub();
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid || !cloudReadyRef.current) return;
+
+    const localPayload = { grades, subjects };
+    const localSig = JSON.stringify(localPayload);
+    if (localSig === lastCloudSigRef.current) return;
+
+    saveUserCloudData(user.uid, localPayload)
+      .then(() => {
+        lastCloudSigRef.current = localSig;
+      })
+      .catch((err) => {
+        console.error("Cloud save failed:", err);
+      });
+  }, [user?.uid, grades, subjects]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setQuestionsRemaining(DAILY_AI_PILOT_QUESTIONS);
+      return;
+    }
+
+    refreshQuestionQuota();
+  }, [user?.uid, refreshQuestionQuota]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    let timeoutId = null;
+    let cancelled = false;
+
+    const scheduleNextRefresh = () => {
+      const delay = getMsUntilNextBerlinMidnight();
+      timeoutId = window.setTimeout(async () => {
+        if (cancelled) return;
+        await refreshQuestionQuota();
+        if (!cancelled) {
+          scheduleNextRefresh();
+        }
+      }, delay);
+    };
+
+    const handleFocus = () => {
+      refreshQuestionQuota();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshQuestionQuota();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    scheduleNextRefresh();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [user?.uid, refreshQuestionQuota]);
+
+  const ctx = useMemo(() => ({ grades, setGrades, subjects, setSubjects }), [grades, setGrades, subjects, setSubjects]);
+
+  const handleAuth   = u => { setUser(u); setView("app"); };
+  const handleLogout = async () => {
+    try {
+      await signOutUser();
+    } catch (err) {
+      console.error("Logout failed:", err);
+    }
+    setGrades([]);
+    setSubjects([]);
+    setUser(null);
+    setView("landing");
+  };
+
+  // Called from SearchBar when user clicks a search result
+  const handleSearchSelect = useCallback((gradeId) => {
+    setPage("grades");
+    setTimeout(() => {
+      setHighlightId(gradeId);
+      setTimeout(() => setHighlightId(null), 2500);
+    }, 80);
+  }, []);
+
+  const dockItems = useMemo(() => [
+    { id:"dashboard", label:"Dashboard",    icon:Icons.dash,     onClick:()=>setPage("dashboard") },
+    { id:"grades",    label:"Noten",        icon:Icons.notes,    onClick:()=>setPage("grades")    },
+    { id:"add",       label:"+ Note",       icon:Icons.add,      onClick:()=>setAddOpen(true)     },
+    { id:"stats",     label:"Statistiken",  icon:Icons.stats,    onClick:()=>setPage("stats")     },
+    { id:"settings",  label:"Einstellungen",icon:Icons.settings, onClick:()=>setPage("settings")  },
+  ], [setPage, setAddOpen]);
+
+  const renderPage = () => {
+    switch (page) {
+      case "dashboard": return <Dashboard loading={loading} user={user} cloudSynced={cloudSynced}/>;
+      case "grades":    return <GradesPage onAdd={()=>setAddOpen(true)} highlightId={highlightId}/>;
+      case "stats":     return <StatsPage/>;
+      case "settings":  return <SettingsPage user={user} onLogout={handleLogout}/>;
+    }
+  };
+
+  return (
+    <AppCtx.Provider value={ctx}>
+      <GlobalStyles />
+
+      {view === "landing" && <Landing onLogin={() => setView("auth")} onRegister={() => setView("auth")}/>}
+      {view === "auth"    && <AuthPage onAuth={handleAuth}/>}
+
+      {view === "app" && (
+        <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", width:"100%", position:"relative" }}>
+          <AIMascotDrawer 
+            grades={grades} 
+            subjects={subjects} 
+            user={user}
+            cloudSynced={cloudSynced}
+            questionsRemaining={questionsRemaining}
+            setQuestionsRemaining={setQuestionsRemaining}
+          />
+          <div style={{
+            position:"sticky", top:0, zIndex:100,
+            background:"#07070cf0", backdropFilter:"blur(20px)",
+            borderBottom:"1px solid #1c1c2e",
+            display:"flex", justifyContent:"space-between", alignItems:"center",
+            padding:"0 32px", height:52, width:"100%",
+          }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ width:24, height:24, borderRadius:"6px", background:"#5b6ef0", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 10v6M2 10l10-5 10 5-10 5z"/>
+                  <path d="M6 12v5c3 3 9 3 12 0v-5"/>
+                </svg>
+              </div>
+              <span style={{ fontSize:13, fontWeight:800, letterSpacing:"-0.04em", color:"#ededf8" }}>Notenpilot</span>
+            </div>
+
+            <SearchBar onSelect={handleSearchSelect}/>
+
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <SparkBtn onClick={() => setAddOpen(true)}>+ Note</SparkBtn>
+              {user && (
+                <motion.button onClick={() => setPage("settings")} whileHover={{ scale:1.02 }}
+                  style={{ width:30, height:30, borderRadius:"9999px", background:"#5b6ef025", border:"1px solid #5b6ef040", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:"#7585f4", fontFamily:"inherit" }}
+                  title="Einstellungen"
+                >{(user.name||"?")[0].toUpperCase()}</motion.button>
+              )}
+            </div>
+          </div>
+
+          <div style={{ flex:1, width:"100%", padding:"24px 32px 110px", boxSizing:"border-box" }}>
+            <div key={page}>{renderPage()}</div>
+          </div>
+
+          <div style={{ position:"fixed", bottom:20, left:0, right:0, display:"flex", justifyContent:"center", zIndex:200, pointerEvents:"none" }}>
+            <div style={{ pointerEvents:"all" }}>
+              <Dock items={dockItems} activeId={page} panelHeight={50} baseItemSize={50} magnification={70} distance={200}/>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Note eintragen">
+        <GradeForm onClose={() => setAddOpen(false)}/>
+      </Modal>
+    </AppCtx.Provider>
+  );
+}
+
+export default function App() {
+  return (
+    <ToastProvider>
+      <AppShell />
+    </ToastProvider>
+  );
+}

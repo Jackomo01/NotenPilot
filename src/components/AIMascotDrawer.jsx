@@ -1,0 +1,718 @@
+import { useEffect, useMemo, useRef, useState, memo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { useLS } from "../hooks/index.jsx";
+import { AI_REQUEST_COOLDOWN_MS, buildAIContext, getSuggestions, streamChatAnswer, waitForAICooldown } from "../utils/ai.jsx";
+import { consumeUserQuestionQuota, DAILY_AI_PILOT_QUESTIONS, loadUserCloudData } from "../utils/cloudData.js";
+import { C, R } from "../utils/tokens.jsx";
+
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const buildSparklinePath = (grades = [], width = 78, height = 22) => {
+  const sorted = [...grades]
+    .filter((g) => Number.isFinite(Number(g?.grade)))
+    .sort((a, b) => new Date(a?.date || 0) - new Date(b?.date || 0))
+    .slice(-8);
+
+  if (sorted.length < 2) return "";
+
+  const minX = 2;
+  const maxX = width - 2;
+  const minY = 2;
+  const maxY = height - 2;
+  const step = (maxX - minX) / (sorted.length - 1);
+
+  const points = sorted.map((g, i) => {
+    const grade = Math.max(1, Math.min(6, Number(g.grade)));
+    const y = minY + ((grade - 1) / 5) * (maxY - minY);
+    const x = minX + step * i;
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  });
+
+  return `M ${points.join(" L ")}`;
+};
+
+const normalizeQ = (q) => String(q || "").trim().toLowerCase();
+
+const AIMascotDrawer = memo(({
+  grades,
+  subjects,
+  user,
+  cloudSynced = true,
+  messages,
+  setMessages,
+  askedQuestions = [],
+  setAskedQuestions,
+  questionsRemaining,
+  setQuestionsRemaining,
+  onOpenFullChat,
+}) => {
+  const [open, setOpen] = useLS("np6_ai_widget_open", false);
+  const [panelPos, setPanelPos] = useLS("np6_ai_widget_panel_pos", { x: 0, y: 0 });
+  const [iconPos, setIconPos] = useLS("np6_ai_widget_icon_pos", { x: 0, y: 0 });
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [cooldownRemainingMs, setCooldownRemainingMs] = useState(0);
+  const [hasUnread, setHasUnread] = useLS("np6_ai_widget_unread", false);
+  const [localMessages, setLocalMessages] = useLS("np6_ai_widget_messages", []);
+  const [localAskedQuestions, setLocalAskedQuestions] = useLS("np6_ai_widget_asked_questions", []);
+  const [panelDragging, setPanelDragging] = useState(false);
+  const [buttonDragging, setButtonDragging] = useState(false);
+  const dragStartRef = useRef(null);
+  const dragMovedRef = useRef(false);
+  const listRef = useRef(null);
+  const cooldownTimerRef = useRef(null);
+  const effectiveMessages = Array.isArray(messages) ? messages : localMessages;
+  const updateMessages = typeof setMessages === "function" ? setMessages : setLocalMessages;
+  const effectiveAskedQuestions = Array.isArray(askedQuestions) ? askedQuestions : localAskedQuestions;
+  const updateAskedQuestions = typeof setAskedQuestions === "function" ? setAskedQuestions : setLocalAskedQuestions;
+
+  const liveContext = useMemo(() => buildAIContext(grades, subjects), [grades, subjects]);
+
+  useEffect(() => {
+    if (!open) return;
+    setHasUnread(false);
+  }, [open, setHasUnread]);
+
+  useEffect(() => {
+    updateAskedQuestions([]);
+  }, [user?.uid, updateAskedQuestions]);
+
+  const currentSuggestions = useMemo(() => getSuggestions(liveContext, effectiveAskedQuestions), [liveContext, effectiveAskedQuestions]);
+  const sparklinePath = useMemo(() => buildSparklinePath(liveContext?.grades || []), [liveContext?.grades]);
+  const trendMeta = useMemo(() => {
+    const slope = Number(liveContext?.trendSlope || 0);
+    if (slope < -0.08) return { label: "Trend steigend", arrow: "↗", color: C.g1 };
+    if (slope > 0.08) return { label: "Trend fallend", arrow: "↘", color: C.err };
+    return { label: "Trend instabil", arrow: "→", color: C.wrn };
+  }, [liveContext?.trendSlope]);
+
+  useEffect(() => {
+    const last = effectiveMessages[effectiveMessages.length - 1];
+    if (!last) return;
+    if (!open && last.role === "assistant" && !last.streaming) setHasUnread(true);
+  }, [effectiveMessages, open, setHasUnread]);
+
+  useEffect(() => {
+    if (!open) return;
+    const el = listRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: window.innerWidth <= 768 ? "auto" : "smooth" });
+    });
+  }, [effectiveMessages, open]);
+
+  useEffect(() => {
+    if (!cooldownRemainingMs) return undefined;
+    cooldownTimerRef.current = window.setInterval(() => {
+      setCooldownRemainingMs((current) => Math.max(0, current - 250));
+    }, 250);
+    return () => {
+      if (cooldownTimerRef.current) window.clearInterval(cooldownTimerRef.current);
+    };
+  }, [cooldownRemainingMs]);
+
+  const send = async (forcedPrompt) => {
+    const prompt = String(forcedPrompt ?? input).trim();
+    if (!prompt || sending || cooldownRemainingMs > 0) return;
+
+    if (user?.uid && !cloudSynced) {
+      updateMessages((prev) => [...prev, {
+        id: `ws_${Date.now()}`,
+        role: "assistant",
+        text: "Bitte kurz warten: Deine Daten werden noch mit der Cloud synchronisiert.",
+        ts: Date.now(),
+        streaming: false,
+        followUps: [],
+      }]);
+      return;
+    }
+
+    const hasAsked = (effectiveAskedQuestions || []).some((q) => normalizeQ(q) === normalizeQ(prompt));
+    const nextAsked = hasAsked ? effectiveAskedQuestions : [...(effectiveAskedQuestions || []), prompt];
+    updateAskedQuestions(nextAsked);
+
+    if (user?.uid) {
+      try {
+        const quota = await consumeUserQuestionQuota(user.uid, DAILY_AI_PILOT_QUESTIONS);
+        setQuestionsRemaining?.(quota.remaining);
+        if (!quota.allowed) {
+          const limitMsg = {
+            id: `wl_${Date.now()}`,
+            role: "assistant",
+            text: "Limit erreicht. Du hast heute keine Fragen mehr übrig.",
+            ts: Date.now(),
+            streaming: false,
+            followUps: [],
+          };
+          updateMessages((prev) => [...prev, limitMsg]);
+          return;
+        }
+      } catch {
+        const quotaErrorMsg = {
+          id: `wq_${Date.now()}`,
+          role: "assistant",
+          text: "Fragenlimit konnte gerade nicht geprüft werden. Bitte versuche es in ein paar Sekunden erneut.",
+          ts: Date.now(),
+          streaming: false,
+          followUps: [],
+        };
+        updateMessages((prev) => [...prev, quotaErrorMsg]);
+        return;
+      }
+    }
+
+    setSending(true);
+    setInput("");
+    setCooldownRemainingMs(AI_REQUEST_COOLDOWN_MS);
+
+    const userMsg = { id: `wu_${Date.now()}`, role: "user", text: prompt, ts: Date.now() };
+    const assistantId = `wa_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const assistantMsg = {
+      id: assistantId,
+      role: "assistant",
+      text: "",
+      ts: Date.now(),
+      streaming: true,
+      followUps: [],
+      aiProvider: null,
+      aiModel: null,
+    };
+
+    updateMessages((prev) => [...prev, userMsg, assistantMsg]);
+
+    await waitForAICooldown("ai-mascot");
+
+    let runtimeGrades = grades;
+    let runtimeSubjects = subjects;
+    if (user?.uid) {
+      try {
+        const remote = await loadUserCloudData(user.uid);
+        if (remote) {
+          runtimeGrades = Array.isArray(remote.grades) ? remote.grades : grades;
+          runtimeSubjects = Array.isArray(remote.subjects) ? remote.subjects : subjects;
+        }
+      } catch {
+        // Use local state if cloud read fails.
+      }
+    }
+
+    const runtimeCtx = buildAIContext(runtimeGrades, runtimeSubjects);
+
+    const history = effectiveMessages.filter((m) => m.role === "user" || m.role === "assistant");
+    for await (const partial of streamChatAnswer(prompt, runtimeCtx, history, undefined, (meta) => {
+      updateMessages((prev) => prev.map((m) => (
+        m.id === assistantId
+          ? { ...m, aiProvider: meta?.provider || m.aiProvider, aiModel: meta?.model || m.aiModel }
+          : m
+      )));
+    })) {
+      updateMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, text: partial, streaming: true } : m)));
+    }
+
+    updateMessages((prev) => prev.map((m) => (
+      m.id === assistantId
+        ? { 
+            ...m, 
+            streaming: false, 
+            followUps: getSuggestions(runtimeCtx, nextAsked)
+          }
+        : m
+    )));
+
+    setSending(false);
+  };
+
+  // Button drag handlers
+  const startButtonDrag = (e) => {
+    dragStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      offsetX: iconPos.x,
+      offsetY: iconPos.y,
+    };
+    dragMovedRef.current = false;
+    setButtonDragging(true);
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+
+  const onButtonDragMove = (e) => {
+    if (!buttonDragging || !dragStartRef.current) return;
+    const dx = e.clientX - dragStartRef.current.startX;
+    const dy = e.clientY - dragStartRef.current.startY;
+
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dragMovedRef.current = true;
+
+    const maxLeft = Math.max(0, window.innerWidth - 56);
+    const maxUp = Math.max(0, window.innerHeight - 56);
+
+    setIconPos({
+      x: clamp(dragStartRef.current.offsetX + dx, -maxLeft, 0),
+      y: clamp(dragStartRef.current.offsetY + dy, -maxUp, 0),
+    });
+  };
+
+  const endButtonDrag = (e) => {
+    setButtonDragging(false);
+    dragStartRef.current = null;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+  };
+
+  // Panel drag handlers
+  const startPanelDrag = (e) => {
+    if (e.target.closest("input") || e.target.closest("button")) return;
+    dragStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      offsetX: panelPos.x,
+      offsetY: panelPos.y,
+    };
+    dragMovedRef.current = false;
+    setPanelDragging(true);
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+
+  const onPanelDragMove = (e) => {
+    if (!panelDragging || !dragStartRef.current) return;
+    const dx = e.clientX - dragStartRef.current.startX;
+    const dy = e.clientY - dragStartRef.current.startY;
+
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dragMovedRef.current = true;
+
+    const maxLeft = Math.max(0, window.innerWidth - 340);
+    const maxUp = Math.max(0, window.innerHeight - 520);
+
+    setPanelPos({
+      x: clamp(dragStartRef.current.offsetX + dx, 0, maxLeft),
+      y: clamp(dragStartRef.current.offsetY + dy, 0, maxUp),
+    });
+  };
+
+  const endPanelDrag = (e) => {
+    setPanelDragging(false);
+    dragStartRef.current = null;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+  };
+
+  const translateBtnX = Number(iconPos.x || 0);
+  const translateBtnY = Number(iconPos.y || 0);
+  const translatePnlX = Number(panelPos.x || 0);
+  const translatePnlY = Number(panelPos.y || 0);
+
+  return (
+    <>
+      <style>{`
+        @keyframes mascot-wiggle {
+          0% { transform: rotate(0deg) scale(1); }
+          25% { transform: rotate(-4deg) scale(1.01); }
+          50% { transform: rotate(4deg) scale(1.02); }
+          75% { transform: rotate(-3deg) scale(1.01); }
+          100% { transform: rotate(0deg) scale(1); }
+        }
+        @keyframes mascot-blink {
+          0%, 44%, 47%, 100% { transform: scaleY(1); }
+          45%, 46% { transform: scaleY(0.06); }
+        }
+      `}</style>
+
+      {/* Close overlay - subtle */}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            onClick={() => setOpen(false)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0, 0, 0, 0.08)",
+              zIndex: 420,
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Floating Card Panel - 340x520px */}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+                  initial={{ scale: 0.98, opacity: 0, y: 8 }}
+                  animate={{ scale: 1, opacity: 1, y: 0 }}
+                  exit={{ scale: 0.98, opacity: 0, y: 8 }}
+                  transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+            onPointerDown={startPanelDrag}
+            onPointerMove={onPanelDragMove}
+            onPointerUp={endPanelDrag}
+            onPointerCancel={endPanelDrag}
+            style={{
+              position: "fixed",
+              right: 20,
+              bottom: 90,
+              transform: `translate(${translatePnlX}px, ${translatePnlY}px)`,
+              width: "min(360px, calc(100vw - 24px))",
+              height: "min(520px, calc(100vh - 110px))",
+              background: C.bg4,
+              border: `1px solid ${C.line}`,
+              borderRadius: R.xl,
+              overflow: "hidden",
+              boxShadow: "0 20px 40px rgba(0, 0, 0, 0.25)",
+              zIndex: 430,
+              display: "grid",
+              gridTemplateRows: "auto 1fr auto",
+              pointerEvents: "auto",
+              cursor: panelDragging ? "grabbing" : "default",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header - draggable */}
+            <div style={{
+              padding: "12px 14px 10px",
+              borderBottom: `1px solid ${C.line}`,
+              background: `linear-gradient(180deg, ${C.acc}18 0%, ${C.bg4} 65%)`,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: 12,
+              cursor: "grab",
+              userSelect: "none",
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, color: C.t0, fontWeight: 800, letterSpacing: "-0.01em" }}>Analysiere Trends, Daten und Szenarien.</div>
+                <div style={{ fontSize: 11, color: C.t1, marginTop: 2, fontWeight: 700, letterSpacing: "0.04em" }}>AI PILOT</div>
+                {cooldownRemainingMs > 0 && (
+                  <div style={{ marginTop: 6, fontSize: 10, color: C.wrn, fontWeight: 700 }}>
+                    Cooldown: {Math.ceil(cooldownRemainingMs / 1000)}s
+                  </div>
+                )}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  <div style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    fontSize: 10,
+                    color: trendMeta.color,
+                    background: `${trendMeta.color}18`,
+                    border: `1px solid ${trendMeta.color}44`,
+                    borderRadius: R.f,
+                    padding: "2px 7px",
+                    fontWeight: 700,
+                  }}>
+                    <span>{trendMeta.arrow}</span>
+                    <span>{trendMeta.label}</span>
+                  </div>
+
+                  <svg width="78" height="22" viewBox="0 0 78 22" role="img" aria-label="Trendverlauf">
+                    <path d={sparklinePath} fill="none" stroke={trendMeta.color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              </div>
+              <button
+                onClick={() => setOpen(false)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: "4px 6px",
+                  color: C.t1,
+                  fontSize: 16,
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Chat Area */}
+            <div ref={listRef} style={{
+              overflowY: "auto",
+              padding: "10px 12px 8px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }}>
+              {effectiveMessages.length === 0 && (
+                <div style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                }}>
+                  <div style={{ fontSize: 10, color: C.t2, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+                    Intelligente Kurzfragen
+                  </div>
+                  <div style={{ display: "grid", gap: 6, gridTemplateColumns: "1fr" }}>
+                  {currentSuggestions.slice(0, 3).map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => send(f)}
+                      style={{
+                        border: `1px solid ${C.line}`,
+                        background: C.bg3,
+                        color: C.t1,
+                        fontSize: 12,
+                        borderRadius: R.l,
+                        padding: "9px 12px",
+                        minHeight: 40,
+                        width: "100%",
+                        textAlign: "left",
+                        whiteSpace: "normal",
+                        lineHeight: 1.35,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                        fontWeight: 500,
+                        transition: "all 0.2s ease",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.background = C.line;
+                        e.target.style.borderColor = C.accH;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.background = C.bg3;
+                        e.target.style.borderColor = C.line;
+                      }}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                  </div>
+                </div>
+              )}
+
+              {effectiveMessages.map((m) => (
+                <div key={m.id} style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: m.role === "user" ? "flex-end" : "flex-start",
+                  gap: 4,
+                }}>
+                  <div style={{
+                    maxWidth: "100%",
+                    padding: "8px 11px",
+                    borderRadius: R.l,
+                    background: m.role === "user" ? C.acc : C.bg3,
+                    color: m.role === "user" ? C.t0 : C.t1,
+                    fontSize: 12,
+                    lineHeight: 1.35,
+                    whiteSpace: "pre-wrap",
+                    overflowWrap: "anywhere",
+                    wordBreak: "break-word",
+                  }}>
+                    {m.text || (m.streaming ? "..." : "")}
+                    {m.streaming && <span style={{ marginLeft: 3, opacity: 0.6 }}>▍</span>}
+                  </div>
+                  {m.role === "assistant" && m.aiModel && (
+                    <div style={{
+                      fontSize: 10,
+                      color: C.t2,
+                      fontWeight: 600,
+                      paddingRight: 8,
+                    }}>
+                      {m.aiProvider && `[${m.aiProvider}] `}{m.aiModel}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {effectiveMessages.length > 0 && !sending && effectiveMessages[effectiveMessages.length - 1]?.role === "assistant" && (
+                <div style={{
+                  display: "grid",
+                  gap: 6,
+                  gridTemplateColumns: "1fr",
+                  marginTop: 6,
+                }}>
+                  {effectiveMessages[effectiveMessages.length - 1].followUps?.slice(0, 3).map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => send(f)}
+                      style={{
+                        border: `1px solid ${C.line}`,
+                        background: C.bg3,
+                        color: C.t1,
+                        fontSize: 12,
+                        borderRadius: R.l,
+                        padding: "9px 12px",
+                        minHeight: 40,
+                        width: "100%",
+                        textAlign: "left",
+                        whiteSpace: "normal",
+                        overflowWrap: "anywhere",
+                        wordBreak: "break-word",
+                        lineHeight: 1.35,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                        fontWeight: 500,
+                        transition: `all 0.2s ease`,
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.background = C.line;
+                        e.target.style.borderColor = C.accH;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.background = C.bg3;
+                        e.target.style.borderColor = C.line;
+                      }}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Input Area */}
+            <div style={{
+              borderTop: `1px solid ${C.line}`,
+              padding: "9px 12px 12px",
+              display: "grid",
+              gap: 6,
+            }}>
+              {Number.isFinite(questionsRemaining) && (
+                <div style={{
+                  alignSelf: "start",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: questionsRemaining > 0 ? C.t1 : C.err,
+                  background: questionsRemaining > 0 ? C.bg3 : `${C.err}22`,
+                  border: `1px solid ${questionsRemaining > 0 ? C.line : `${C.err}66`}`,
+                  borderRadius: R.f,
+                  padding: "4px 9px",
+                }}>
+                  Noch {questionsRemaining} Frage{questionsRemaining === 1 ? "" : "n"} übrig
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      send();
+                    }
+                  }}
+                  placeholder="Schreibe deine Frage..."
+                  style={{
+                    flex: 1,
+                    background: C.bg3,
+                    border: `1px solid ${C.line}`,
+                    borderRadius: R.l,
+                    color: C.t0,
+                    fontSize: 13,
+                    padding: "11px 13px",
+                    minHeight: 46,
+                    outline: "none",
+                    fontFamily: "inherit",
+                    transition: `border-color 0.15s, box-shadow 0.15s`,
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = C.accH;
+                    e.target.style.boxShadow = `0 0 0 2px ${C.acc}22`;
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = C.line;
+                    e.target.style.boxShadow = "none";
+                  }}
+                />
+                <button
+                  onClick={() => send()}
+                  disabled={!input.trim() || sending || questionsRemaining === 0 || cooldownRemainingMs > 0}
+                  style={{
+                    width: 46,
+                    height: 46,
+                    borderRadius: R.l,
+                    background: !input.trim() || sending || questionsRemaining === 0 || cooldownRemainingMs > 0 ? C.bg3 : C.acc,
+                    color: C.t0,
+                    border: `1px solid ${!input.trim() || sending || questionsRemaining === 0 || cooldownRemainingMs > 0 ? C.line : `${C.acc}66`}`,
+                    cursor: !input.trim() || sending || questionsRemaining === 0 || cooldownRemainingMs > 0 ? "not-allowed" : "pointer",
+                    fontSize: 16,
+                    display: "grid",
+                    placeItems: "center",
+                    fontWeight: 700,
+                    opacity: !input.trim() ? 0.55 : 1,
+                    transition: "background 0.15s, border-color 0.15s, transform 0.12s",
+                  }}
+                >
+                  {cooldownRemainingMs > 0 ? Math.ceil(cooldownRemainingMs / 1000) : "➤"}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Floating Button - 56px, morphs between 🤖 and ✕ */}
+      <motion.button
+        type="button"
+        onPointerDown={startButtonDrag}
+        onPointerMove={onButtonDragMove}
+        onPointerUp={endButtonDrag}
+        onPointerCancel={endButtonDrag}
+        onClick={() => {
+          if (!dragMovedRef.current) setOpen((v) => !v);
+        }}
+        whileHover={{ scale: open ? 1 : 1.03 }}
+        whileTap={{ scale: open ? 1 : 0.97 }}
+        title={open ? "Schließen" : "AI Pilot öffnen"}
+        style={{
+          position: "fixed",
+          right: 20,
+          bottom: 20,
+          transform: `translate(${translateBtnX}px, ${translateBtnY}px)`,
+          zIndex: 440,
+          width: 56,
+          height: 56,
+          borderRadius: "50%",
+          border: "none",
+          background: C.acc,
+          boxShadow: "0 8px 24px rgba(0, 0, 0, 0.2)",
+          display: "grid",
+          placeItems: "center",
+          cursor: buttonDragging ? "grabbing" : "pointer",
+          animation: hasUnread && !open ? "mascot-wiggle 1.6s ease-in-out infinite" : "none",
+          userSelect: "none",
+          touchAction: "none",
+          transition: "background 0.24s ease, box-shadow 0.24s ease, transform 0.24s ease",
+          fontSize: 24,
+          fontWeight: 700,
+          color: C.t0,
+        }}
+        onMouseEnter={(e) => {
+          if (!open) e.currentTarget.style.boxShadow = "0 12px 32px rgba(0, 0, 0, 0.3)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.boxShadow = "0 8px 24px rgba(0, 0, 0, 0.2)";
+        }}
+      >
+        {open ? (
+          "✕"
+        ) : (
+          <img
+            src="/Notenpilot.png"
+            alt="AI Pilot"
+            style={{ width: 30, height: 30, objectFit: "contain", pointerEvents: "none" }}
+          />
+        )}
+
+        {/* Unread badge */}
+        {hasUnread && !open && (
+          <span style={{
+            position: "absolute",
+            top: -4,
+            right: -4,
+            width: 14,
+            height: 14,
+            borderRadius: "50%",
+            background: C.g5,
+            border: `2px solid ${C.bg0}`,
+            boxShadow: `0 2px 8px ${C.g5}66`,
+          }} />
+        )}
+      </motion.button>
+    </>
+  );
+});
+
+AIMascotDrawer.displayName = "AIMascotDrawer";
+export default AIMascotDrawer;
