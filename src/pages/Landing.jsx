@@ -89,7 +89,7 @@ const CustomCursor = () => {
   const pos     = useRef({ x: 0, y: 0 });
   const target  = useRef({ x: 0, y: 0 });
   const raf     = useRef(null);
-  const [hovered, setHovered] = useState(false);
+  const hoveredRef = useRef(false);
   const [enabled, setEnabled] = useState(false);
 
   useEffect(() => {
@@ -106,15 +106,16 @@ const CustomCursor = () => {
     };
     const onOver = e => {
       const el = e.target;
-      if (el.closest("button, a, [role=button], input, select, textarea")) setHovered(true);
+      if (el.closest && el.closest("button, a, [role=button], input, select, textarea")) hoveredRef.current = true;
     };
-    const onOut = () => setHovered(false);
+    const onOut = () => { hoveredRef.current = false; };
 
     const animate = () => {
       pos.current.x += (target.current.x - pos.current.x) * 0.11;
       pos.current.y += (target.current.y - pos.current.y) * 0.11;
       if (ringRef.current) {
-        ringRef.current.style.transform = `translate(${pos.current.x - 20}px, ${pos.current.y - 20}px) scale(${hovered ? 1.6 : 1})`;
+        ringRef.current.style.transform = `translate(${pos.current.x - 20}px, ${pos.current.y - 20}px) scale(${hoveredRef.current ? 1.6 : 1})`;
+        ringRef.current.style.borderColor = (hoveredRef.current ? C.accH : C.acc) + "90";
       }
       raf.current = requestAnimationFrame(animate);
     };
@@ -130,7 +131,7 @@ const CustomCursor = () => {
       cancelAnimationFrame(raf.current);
       document.body.style.cursor = "";
     };
-  }, [hovered]);
+  }, []);
 
   if (!enabled) return null;
 
@@ -138,17 +139,15 @@ const CustomCursor = () => {
     <>
       <div ref={ringRef} style={{
         position:"fixed", top:0, left:0, width:40, height:40, borderRadius:"50%",
-        border:`1.5px solid ${hovered ? C.accH : C.acc}90`,
+        border:`1.5px solid ${C.acc}90`,
         pointerEvents:"none", zIndex:99999,
-        transition:"border-color 0.2s, transform 0.15s ease",
         willChange:"transform",
         mixBlendMode:"screen",
       }}/>
       <div ref={dotRef} style={{
         position:"fixed", top:0, left:0, width:8, height:8, borderRadius:"50%",
-        background: hovered ? C.accH : C.acc,
+        background: C.acc,
         pointerEvents:"none", zIndex:99999,
-        transition:"background 0.15s, width 0.15s, height 0.15s",
         willChange:"transform",
       }}/>
     </>
@@ -370,7 +369,7 @@ const MockPreview = ({ vis }) => {
             </div>
           </div>
           <div style={{ padding:28 }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:16 }}>
+            <div className="mock-stats-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:16 }}>
               {[["Schnitt","1,87",C.g2],["Noten","8",C.t0],["Bestes Fach","Mathe",C.t0],["Trend","↑ besser",C.g1]].map(([l,v,cl],i)=>(
                 <div key={i} style={{ background:C.bg3, borderRadius:R.l, padding:"14px 16px", border:`1px solid ${C.line}` }}>
                   <div style={{ fontSize:9, color:C.t2, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:6 }}>{l}</div>
@@ -378,7 +377,7 @@ const MockPreview = ({ vis }) => {
                 </div>
               ))}
             </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 220px", gap:12 }}>
+            <div className="mock-detail-grid" style={{ display:"grid", gridTemplateColumns:"1fr 220px", gap:12 }}>
               <div style={{ background:C.bg3, borderRadius:R.l, padding:"14px 16px", border:`1px solid ${C.line}` }}>
                 <div style={{ fontSize:10, color:C.t0, fontWeight:600, marginBottom:10 }}>Notenentwicklung</div>
                 <div style={{ height:64, display:"flex", alignItems:"flex-end", gap:4, position:"relative" }}>
@@ -485,7 +484,7 @@ const FloatingCard = ({ side, pos, delay, floatAnim, children }) => (
     initial={{ opacity:0, x: side === "left" ? -40 : 40 }}
     animate={{ opacity:1, x:0 }}
     transition={{ duration:0.7, delay }}
-    style={{ position:"absolute", [side]:pos.side, top:pos.top, zIndex:2, pointerEvents:"none", display:"none" }}
+    style={{ position:"absolute", [side]:pos.side, top:pos.top, zIndex:2, pointerEvents:"none" }}
     className="floating-card"
   >
     <motion.div
@@ -639,7 +638,7 @@ const Landing = memo(({ onLogin, onRegister }) => {
 
       {/* STATS ROW */}
       <div style={{ maxWidth:900, margin:"0 auto 90px", padding:"0 24px" }}>
-        <div style={{ display:"flex", flexWrap:"wrap", background:C.bg2, border:`1px solid ${C.line}`, borderRadius:R.xl, overflow:"hidden" }}>
+        <div className="stats-row" style={{ display:"flex", flexWrap:"wrap", background:C.bg2, border:`1px solid ${C.line}`, borderRadius:R.xl, overflow:"hidden" }}>
           {[
             { v: "∞", l: "Fächer", d: 0 },
             { v: "100%", l: "Lokale Daten", d: 200 },
@@ -714,16 +713,6 @@ const Landing = memo(({ onLogin, onRegister }) => {
         <span style={{ fontSize:12, color:C.t2 }}>Kein Tracking · Kein Abo · Open Source</span>
       </div>
 
-      {/* Responsive overrides */}
-      <style>{`
-        @media (min-width: 769px) {
-          .floating-card { display: block !important; }
-        }
-        @media (max-width: 768px) {
-          .features-grid { grid-template-columns: 1fr !important; }
-          .howit-grid { grid-template-columns: 1fr !important; }
-        }
-      `}</style>
     </div>
   );
 });

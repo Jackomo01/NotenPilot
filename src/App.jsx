@@ -100,6 +100,18 @@ const GlobalStyles = () => (
     .grade-row-highlighted {
       border-left: 3px solid #5b6ef0 !important;
     }
+    .floating-card { display: block; }
+    @media (max-width: 768px) {
+      .floating-card { display: none !important; }
+      .features-grid { grid-template-columns: 1fr !important; }
+      .howit-grid { grid-template-columns: 1fr !important; }
+      .mock-stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+      .mock-detail-grid { grid-template-columns: 1fr !important; }
+    }
+    @media (max-width: 480px) {
+      .stats-row > div { flex: 1 1 100% !important; border-right: none !important; border-bottom: 1px solid #1c1c2e !important; }
+      .stats-row > div:last-child { border-bottom: none !important; }
+    }
   `}</style>
 );
 
